@@ -27,7 +27,8 @@ use crate::AudioError;
 /// They are owned by the completion handler: the async operation holds a reference to the
 /// handler until it completes, so the parameters outlive the operation even if we stop waiting
 /// (timeout) before it finishes. Raw pointers (not `Box`) so that moving the owner never
-/// invalidates the pointer stored inside the PROPVARIANT.
+/// invalidates the pointer stored inside the PROPVARIANT. The PROPVARIANT's own `Drop`
+/// (PropVariantClear) must never run on it — see `Drop` below.
 struct ActivationParams {
     params: *mut AUDIOCLIENT_ACTIVATION_PARAMS,
     prop: *mut PROPVARIANT,
@@ -82,9 +83,14 @@ impl Drop for ActivationParams {
     fn drop(&mut self) {
         // SAFETY: both pointers come from `Box::into_raw` in `new` and are freed exactly once,
         // here. The PROPVARIANT must NOT go through PropVariantClear: its blob is our Box, not
-        // CoTaskMemAlloc memory (and PROPVARIANT has no Drop impl, so this only frees the box).
+        // CoTaskMemAlloc memory. The windows crate DOES implement `Drop for PROPVARIANT`
+        // (`src/extensions/Win32/System/StructuredStorage.rs`, calling PropVariantClear), which
+        // freed the blob and then crashed the second free below with STATUS_HEAP_CORRUPTION
+        // (found on a real Windows 11 build 26300). So the box is reinterpreted as
+        // `ManuallyDrop<PROPVARIANT>` (`repr(transparent)`, same layout): its memory is freed
+        // without running that Drop.
         unsafe {
-            drop(Box::from_raw(self.prop));
+            drop(Box::from_raw(self.prop.cast::<ManuallyDrop<PROPVARIANT>>()));
             drop(Box::from_raw(self.params));
         }
     }

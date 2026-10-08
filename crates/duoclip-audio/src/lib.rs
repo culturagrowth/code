@@ -94,10 +94,8 @@ pub const BYTES_PER_FRAME: usize = CHANNELS as usize * size_of::<f32>();
 /// alignment assumption. A trailing partial sample is ignored.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn samples_from_ne_bytes(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(size_of::<f32>())
-        .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
-        .collect()
+    let (chunks, _partial) = bytes.as_chunks::<{ size_of::<f32>() }>();
+    chunks.iter().map(|b| f32::from_ne_bytes(*b)).collect()
 }
 
 /// One packet of captured audio: float32 interleaved, [`SAMPLE_RATE`] Hz, [`CHANNELS`] channels.

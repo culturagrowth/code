@@ -90,3 +90,14 @@ pub fn windows_build() -> u32;                                      // RtlGetVer
   gaps flag a discontinuity.
 - `cargo clippy -p duoclip-audio --all-targets -- -D warnings` is clean on Linux AND `cargo clippy -p duoclip-audio --all-targets --target x86_64-pc-windows-gnu -- -D warnings`.
   `cargo fmt` is applied.
+
+## Implementation notes (first run on real Windows, 2026-10-08, build 26300)
+
+- **Fixed a double free in `activate.rs`:** the `windows` crate implements `Drop for PROPVARIANT` (in
+  `src/extensions/Win32/System/StructuredStorage.rs`, calling `PropVariantClear`), so dropping the boxed VT_BLOB PROPVARIANT freed our
+  activation-params box, which was then freed again → `STATUS_HEAP_CORRUPTION` (0xC0000374) on every process-loopback start.
+  The box is now freed as `ManuallyDrop<PROPVARIANT>`. Never let a PROPVARIANT whose blob is Rust memory drop normally.
+- Process-loopback `GetBuffer` QPC positions are **synthetic**: exact 100 000 × 100 ns steps per 480-frame packet (the virtual device
+  derives them from the sample count). They show no drift against QPC, but occasionally jump forward by ~8–9 ms with no flag
+  (below the 20 ms `DEFAULT_MAX_JUMP_100NS`). The mic delivers real QPC (±0.1 ms jitter, ≈ −15…−19 ppm drift) and flags a
+  discontinuity on its first packet. Consider a smaller jump threshold (≈ 2 ms) for process-loopback tracks before integrating with the buffer.

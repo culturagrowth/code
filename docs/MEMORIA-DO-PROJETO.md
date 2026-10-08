@@ -301,14 +301,23 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 
 ### Validações pendentes (para fazer em máquinas Windows reais)
 
-1. Compilação nativa com MSVC (até agora só houve checagem cruzada com o alvo gnu).
-2. Process loopback do jogo e do Discord pelo processo raiz, no Windows 10 19045 e no Windows 11 (falhas intermitentes conhecidas no 19045).
-3. Encoders de hardware Media Foundation disponíveis em cada GPU dos amigos (NVIDIA, AMD, Intel).
-4. Benchmark PresentMon: Desktop Duplication recortado × WGC × Medal ligado (CS2, Valorant, Fortnite, LoL, Minecraft, Roblox).
-   Medir também se o Desktop Duplication tira o jogo do *independent flip*.
-5. Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso.
-6. "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame).
-7. Worker contra o R2 de verdade (criar bucket, token S3, D1 e fazer o deploy; ver `worker/README.md`).
+Primeiro teste real em 08/10/2026 (Win11 26300, RTX 5060 Ti): [`docs/relatorios/teste-local-2026-10-08.md`](relatorios/teste-local-2026-10-08.md).
+Os diagnósticos ficam no crate `crates/duoclip-smoke` (`sysinfo`, `audio_probe`, `encoder_probe`, `capture_probe`).
+
+1. ✅ **Compilação nativa com MSVC** (08/10, Rust 1.99, VS Build Tools 2022): nenhum erro. Só um lint novo do clippy (`chunks_exact_to_as_chunks`), já corrigido.
+   374 testes passando (com o smoke), clippy limpo, worker com 312 testes.
+2. 🟡 **Process loopback:** ✅ Discord pelo processo raiz no **Win11 26300**, 3/3 ativações sem retry, depois de corrigir um **double free** (`Drop for PROPVARIANT`
+   do crate `windows` → `STATUS_HEAP_CORRUPTION` em todo início de process loopback). Microfone e endpoint loopback ok.
+   Achados: os timestamps do process loopback são sintéticos (passos exatos de 10 ms) e às vezes saltam ~8–9 ms sem flag (abaixo do limiar de 20 ms do tracker);
+   não usa a flag `SILENT`. ❌ Falta: **Win10 19045**, e o process loopback do **jogo** (`audio_probe --capture --game-exe x.exe`).
+3. 🟡 **Encoders MF:** ✅ NVIDIA (RTX 5060 Ti): H.264, HEVC e AV1 de hardware ativam. O MFT H.264 de hardware exige **NV12**
+   (validado com ffmpeg `h264_mf`; `h264_nvenc` 1080p60 ok). ❌ Falta: AMD e Intel, e o teste com o `duoclip-encode` (ainda é esqueleto).
+4. ❌ Benchmark PresentMon: Desktop Duplication recortado × WGC × Medal ligado (CS2, Valorant, Fortnite, LoL, Minecraft, Roblox).
+   Medir também se o Desktop Duplication tira o jogo do *independent flip*. (PresentMon e Medal não estavam instalados; o `capture_probe` está pronto mas
+   ainda não rodou: o usuário pulou a captura de tela.) A máquina de teste tem **HDR no monitor principal e um monitor girado 90°**, e o DDA precisa tratar os dois.
+5. ❌ Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso. (No 26300, `IsBorderRequired` e `GraphicsCaptureAccess` existem.)
+6. ❌ "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame). (O teste SNTP contra `time.cloudflare.com` passou no Windows.)
+7. ❌ Worker contra o R2 de verdade (criar bucket, token S3, D1 e fazer o deploy; ver `worker/README.md`).
 8. Opcional: teste "caixa-preta" do Medal 2026 (`tasklist /m medal-hook64.dll` e os logs em `%AppData%\Medal`).
 
 ## 7. Como retomar em outro ambiente
