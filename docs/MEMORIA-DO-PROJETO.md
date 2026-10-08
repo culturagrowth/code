@@ -293,6 +293,23 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 
 ### Em andamento / pendente
 
+**Entregas locais do GPT em 08/10/2026:**
+
+- Tarefa 10: presença do Worker em `gpt/worker-presenca`, commit de entrega `5573717`, aguardando revisão do Claude.
+  Implementa heartbeat, consulta de membros disponíveis por grupo, TTL de 30 s, sequência crescente e migração 0003;
+  355 testes Worker e 374 testes Rust passaram. O contrato completo está no SPEC daquela branch.
+- Tarefa 13: configuração R2/D1 em `gpt/worker-r2`, worktree `C:\Users\bolad\Projetos\duoclip-gpt-worker-r2`.
+  Os ids não secretos foram preenchidos no `worker/wrangler.toml`. As chaves S3 permanecem somente no arquivo
+  ignorado `C:\Users\bolad\Projetos\duoclip\worker\.dev.vars`, preenchido pelo usuário; seus valores não foram exibidos.
+- `npm run test:r2 -- --env-file <arquivo>` usa o presigner real, um objeto sintético cifrado com UUIDs novos, valida
+  PUT/GET, tamanho assinado e exclusão do objeto. Há nove testes locais cobrindo também falhas de rede, limpeza e sigilo da saída.
+  Nesta branch: 321 testes Worker, typecheck, formatação, Clippy, 374 testes Rust (4 ignorados) e check Windows GNU passaram.
+- **R2 real ainda não validado:** duas tentativas foram bloqueadas antes da primeira resposta HTTP com `EACCES`.
+  Nenhum objeto foi criado. A tarefa 13 aguarda o usuário executar o comando no terminal habitual e compartilhar apenas o resultado.
+  Nenhum deploy, migração remota ou validação remota de D1 foi realizado. S3 não substitui a autenticação administrativa do Wrangler.
+- As branches locais continuam separadas; a configuração R2 não contém o código de presença, que será integrado após revisão.
+  O ambiente também não conseguiu conectar ao GitHub para publicar as entregas.
+
 1. **Terminar a B1:**
    - revisar o gamesdb;
    - terminar e revisar mux e áudio;

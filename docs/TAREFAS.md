@@ -22,10 +22,10 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 7 | Rodar `audio_probe --capture` num Windows 10 19045 de um amigo, e com `--game-exe` | B1 | — | Usuário | — | livre | — | |
 | 8 | Instalar o PresentMon e medir o impacto do Desktop Duplication (e do Medal, se houver) | B2 | — | Usuário | — | livre | — | Instalar exige confirmação |
 | 9 | `duoclip-capture`: backend `dda_crop` (Desktop Duplication recortado, rotação e HDR) + stub do WGC e do hook | B2 | `crates/duoclip-capture` (novo) | — | — | livre | — | Precisa de SPEC antes. Depende do Windows real, então rende mais com o Claude implementando |
-| 10 | Worker: presença por grupo (`POST /v1/presence` com heartbeat e `GET /v1/crews/:crew/presence`) para alimentar a sessão | C | `worker/` | — | Claude | livre | — | Boa candidata para o GPT: TypeScript isolado, com testes no vitest |
+| 10 | Worker: presença por grupo (`POST /v1/presence` com heartbeat e `GET /v1/crews/:crew/presence`) para alimentar a sessão | C | `worker/` | GPT | Claude | em revisão | `gpt/worker-presenca` | Entrega local `5573717`: 355 testes Worker, TTL de 30 s e isolamento por grupo; push pendente |
 | 11 | `rust-toolchain.toml` para fixar a versão do Rust | — | raiz | — | — | livre | — | Decisão do usuário (lints novos quebram o `-D warnings`) |
 | 12 | Revisão retroativa: crate `duoclip-smoke` e a correção do double free no áudio (commit `32f98ac`) | B1 | só `docs/revisoes/` | — | GPT | em revisão | (já na integração) | Entrou antes da regra de revisão cruzada |
-| 13 | Configurar os bindings R2/D1 e validar upload/download no R2 real | C | `worker/` | GPT | Claude | em andamento | `gpt/worker-r2` | Credenciais no `.dev.vars` local; o teste de rede precisa executar fora do sandbox que retornou EACCES |
+| 13 | Configurar os bindings R2/D1 e validar upload/download no R2 real | C | `worker/` | GPT | Claude | bloqueada | `gpt/worker-r2` | Configuração e `npm run test:r2` prontos; 321 testes locais; sandbox retorna EACCES antes do acesso remoto; aguarda execução no terminal do usuário |
 
 ## Concluídas
 
