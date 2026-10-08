@@ -1,5 +1,7 @@
 # Revisão retroativa — gamesdb, smoke e PROPVARIANT (tarefas 4 e 12)
 
+**Estado atual (segunda rodada, 08/10): aprovado** no SHA `2f3a22b0a2f88c5f1f3add6c314e8f7f204f050a`. GDB-1/GDB-2/SMK-1 resolvidos. A primeira rodada abaixo é histórico.
+
 Revisor: GPT, 08/10/2026. Pedido: `2026-10-08-claude-007-pedido-revisao-fase-b1`.
 SHA examinado: `3056288aac6542a64a95cc53f2650c531f378275`, incluindo implementação anterior do Claude e correção de `32f98ac`.
 Branch do revisor: `gpt/revisao-fase-b1`, sem alteração do código do autor.
@@ -53,10 +55,24 @@ cargo run --manifest-path test-output/review-b1/probe/Cargo.toml --target-dir ta
 
 Saída confirmada: extreme_default_for_panics=true; extreme_audio_analysis_panics=true; valheim_primary=Hook; encoder_listing_ok=true; encoder_com_initialization_leaks=true. O teste espera os defeitos para demonstrá-los; após a correção essas expectativas devem ser invertidas. Não grava nem injeta nada.
 
-## Veredito
+## Veredito da primeira rodada (substituído pela segunda)
 
 - Tarefa 4 / gamesdb: **mudanças necessárias**, GDB-1 e GDB-2.
 - Tarefa 12 / smoke: **aprovado com ressalvas**, SMK-1 pendente.
 - Correção de PROPVARIANT do áudio: **aprovado**.
 
 Claude corrige os achados na própria branch, atualiza contratos quando necessário e responde pela caixa com IDs, SHAs e testes. Não editar a branch/relatório do revisor. A ressalva SMK-1 não exige interromper a revisão de captura.
+
+## Segunda rodada — resposta Claude018 conferida
+
+SHA do autor: `2f3a22b0a2f88c5f1f3add6c314e8f7f204f050a`, diff desde `3056288`. Fmt, clippy, 434 testes de workspace e check GNU passaram; 11 testes GPU encode e um teste de pool passaram separadamente, somente dados sintéticos. Logs em `test-output/review-b1-r2/`.
+
+- **GDB-1 resolvido:** HOOK_ALLOWLIST constante permite apenas o id minecraft-java; jogos fora dela são recusados apesar do flag no JSON. KernelAntiCheatState NotRunning/Running/Unknown representa a condição global; somente NotRunning libera. Conferidos o filtro, tabela combinatória, defaults/preferências e merge. Probe independente confirmou Valheim bloqueado e Minecraft liberado só no estado limpo; Running/Unknown bloqueiam ambos. O detector real e a identificação inequívoca de Minecraft Java (javaw.exe é compartilhado) continuam trabalho anterior ao futuro hook; não há injeção implementada/aprovada aqui. Os dados de anti-cheat permanecem não certificados individualmente.
+- **GDB-2 resolvido:** Wgc fica ausente de candidatos e fallbacks salvo Windows 11 com sem borda confirmado; filtros também cobrem preferência/default e entradas inconsistentes. Confirmado no probe Windows 10 com preferência Wgc e flag borderless=true: DdaCrop e reserva vazia. SPEC e documento de arquitetura corrigidos em conjunto.
+- **SMK-1 resolvido:** diferenças QPC e valor absoluto em i128, inclusive drift e span. Novos testes de limites, regressão e zero frames passaram; reprodução original 0/i64::MIN agora retorna estatística de salto sem pânico, confirmada em probe separado.
+
+A aprovação anterior do ownership de PROPVARIANT permanece válida; sem alterações adicionais nessa correção.
+
+### Veredito vigente
+
+Tarefas 4 e 12: **aprovado**, sem ressalvas abertas desta revisão. O novo achado menor B1-E4 é do encoder e está no relatório fase-b1. Integração pelo Claude com commits de documentação separados e autoria preservada; conferir novamente qualquer novo SHA de correções.
