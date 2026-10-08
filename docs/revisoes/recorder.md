@@ -72,6 +72,28 @@ SHA-256 do MP4: `acf64de1ef67bb858846f0619807516828c86689b975262888cae5609a9ff1e
 Para validar a imagem, repetir o teste mantendo a janela colorida em primeiro plano.
 A confirmação já concedida cobre a repetição desse mesmo teste; não precisa pedi-la de novo.
 
+### Segunda tentativa e diagnóstico do primeiro plano
+
+A pedido do usuário, o mesmo teste foi repetido, desta vez com PTY. Novamente passou
+(1 teste, 0 falhas), mas a janela não obteve primeiro plano. MP4 de 3,018 s, 132.560 bytes,
+áudio de 440,005 Hz e 90 quadros apresentados escuros idênticos na análise reduzida.
+SHA-256: `0360fe5efdc4173eceaf0e44457f6b38e7df1a39f3090a42fb3fb47377657199`.
+Log: `test-output/review-recorder/hardware-tentativa-2.log`.
+
+Consulta sem captura às APIs do Windows identificou `WinSta0`, desktop
+`CodexSandboxDesktop-…` e `GetForegroundWindow() == NULL`. Isso explica a ausência de
+primeiro plano nas tentativas deste ambiente: os comandos estão num desktop isolado do
+Codex. Não é evidência de falha do gravador no desktop normal do usuário. Não tentamos
+remover o isolamento, trocar desktop ou contornar a regra de foco do gravador.
+
+Próximo passo concreto: executar no PowerShell normal do Windows o script local
+`test-output/review-recorder/rodar-teste-primeiro-plano.ps1` deste worktree, que roda somente
+o mesmo teste, offline, e salva `hardware-desktop-normal.log`. O script foi conferido com
+o parser do PowerShell, mas não executado dentro do sandbox, onde repetiria a mesma
+limitação. A primeira tentativa foi preservada como
+`test-output/review-recorder/recorder-e2e-tentativa-1.mp4` e
+`media-verification-tentativa-1.json`. A saída MP4 padrão agora contém a segunda tentativa.
+
 Esse teste não valida a detecção de um jogo real, o registro do atalho nem as fontes WASAPI
 de jogo/Discord/microfone. Essas partes continuam **não verificadas com hardware**.
 Permanecem os limites já documentados da captura DDA, inclusive sobreposições visíveis.
