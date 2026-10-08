@@ -402,7 +402,7 @@ Todo início de hora o Worker:
    completo. Assim a execução seguinte ainda consegue remover um upload tardio que tenha usado uma URL ainda válida, e
    nunca se perde a referência de um clipe que ainda tem objetos;
 3. apaga assinaturas anti-replay com mais de 15 minutos, convites vencidos ou sem usos, contadores de uso e de limites
-   com mais de 7 dias e presenças com mais de 30 segundos;
+   com mais de 7 dias e presenças com mais de 90 segundos;
 4. registra uma linha JSON com as contagens (`clips_processed`, `objects_deleted`, `clip_rows_deleted`, `clip_failures`,
    `clips_incomplete`, `clips_deferred`, `signatures_purged`, `invites_purged`, `usage_rows_purged`,
    `counter_rows_purged`, `presence_rows_purged`).
