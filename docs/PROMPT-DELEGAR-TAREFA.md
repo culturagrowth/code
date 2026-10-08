@@ -2,6 +2,14 @@
 
 > Regra do projeto: **quem implementa não revisa.** O GPT revisa o Claude e o Claude revisa o GPT ([`AGENTS.md`](../AGENTS.md), item 5).
 
+## Fluxo local por arquivos
+
+Quando ambos os agentes têm acesso ao PC, use [`COMUNICACAO-AGENTES.md`](COMUNICACAO-AGENTES.md).
+O remetente publica o pedido diretamente na caixa compartilhada da pasta principal e o destinatário responde por outro arquivo.
+O usuário não precisa copiar prompts, resultados de revisão ou entregas entre as conversas.
+Os modelos abaixo continuam úteis para compor o conteúdo de cada mensagem e para agentes sem acesso ao mesmo disco.
+As etapas de enviar ou pedir uma revisão pelo chat só se aplicam ao caso sem acesso compartilhado.
+
 1. Escolha uma tarefa **livre** em [`TAREFAS.md`](TAREFAS.md) (ou peça ao Claude para criar uma, com SPEC).
 2. Mude o "Dono" para `GPT` e o status para `em andamento` (ou peça ao Claude para fazer isso), e faça o push.
 3. Preencha o modelo abaixo e mande para o GPT:
