@@ -61,11 +61,21 @@ Publicar uma mensagem não inicia nem acorda outra sessão de IA; agentes ativos
 
 **Pastas:** todos os worktrees novos ficam dentro de `C:\Users\bolad\Projetos\duoclip\worktrees\<agente>-<tarefa>`.
 Não crie pastas irmãs de `duoclip` em `Projetos`. Preserve uma branch por tarefa e mova worktrees com `git worktree move`.
+**Integração fixa:** a pasta principal permanece sempre em `claude/sync-gameplay-clip-app-xpgfwx`.
+Não use `git switch` ou `git checkout` nela para trabalhar numa tarefa: a caixa versionada pode desaparecer ao trocar de branch.
+Crie a branch e a pasta com `git worktree add`. Se encontrar a principal noutra branch, preserve alterações locais e avise pela caixa;
+uma leitura feita nesse estado não prova que não há mensagens. Retornar à integração exige conferir e preservar o trabalho local.
+**Revisão isolada:** leia branches e commits pelo repositório principal com `git log/diff/show` e rode checagens em worktree do próprio revisor.
+No Windows, worktrees de agentes distintos podem ter donos distintos e falhar com `dubious ownership`.
+Não altere `safe.directory` ou permissões para contornar isso; use seu próprio worktree no SHA entregue.
 
 1. **Uma tarefa por vez, com dono.** Antes de começar, a tarefa tem que estar em `docs/TAREFAS.md` com o seu nome (`Claude` ou `GPT`)
    na coluna "Dono". Se estiver com outro dono, não mexa.
-2. **Uma branch por tarefa**, criada a partir da branch de integração `claude/sync-gameplay-clip-app-xpgfwx`:
-   `claude/<tarefa>` ou `gpt/<tarefa>` (ex.: `gpt/worker-presenca`). Nunca faça commit direto na branch de outra IA.
+2. **Uma branch por tarefa de implementação**, criada a partir da branch de integração `claude/sync-gameplay-clip-app-xpgfwx`:
+   `claude/<tarefa>` ou `gpt/<tarefa>` (ex.: `gpt/worker-presenca`). Para revisão, crie `<revisor>/revisao-<tarefa>`
+   a partir do SHA exato entregue, em worktree próprio. Nunca faça commits de implementação ou de revisão na branch de outra IA.
+   O quadro canônico e mensagens novas da sua autoria são metadados compartilhados: podem ter commits pequenos na integração,
+   com apenas os caminhos desses metadados. Essa exceção não autoriza código, regras ou relatórios de revisão direto na integração.
 3. **Escopo por pasta.** Cada tarefa diz quais pastas pode alterar (normalmente um crate ou o `worker/`). Fora delas, só leitura.
    Mudanças em arquivos compartilhados (`Cargo.toml` da raiz, `Cargo.lock`, `AGENTS.md`, `docs/MEMORIA-DO-PROJETO.md`) ficam no fim da
    tarefa, em commit separado, para facilitar o merge.
@@ -75,12 +85,19 @@ Não crie pastas irmãs de `duoclip` em `Projetos`. Preserve uma branch por tare
    fez, e o Claude revisa o que o GPT fez. Não use subagentes da mesma IA como "revisão": isso não substitui a revisão da outra.
    - O revisor lê o SPEC e o diff da branch (`git diff <integração>...<branch>`), roda todas as checagens e procura bugs de verdade
      (correção, segurança, `unsafe`, pânico com entrada não confiável, desvios do SPEC, testes fracos).
-   - O resultado vai em `docs/revisoes/<tarefa>.md`: cada achado com gravidade (crítico, importante, menor), arquivo e linha, cenário
+   - O resultado vai em `docs/revisoes/<tarefa>.md`, na branch **do revisor** `<revisor>/revisao-<tarefa>`: cada achado com gravidade
+     (crítico, importante, menor), arquivo e linha, cenário
      que falha e sugestão. No fim, um veredito: **aprovado**, **aprovado com ressalvas** ou **mudanças necessárias**.
    - O revisor **não corrige** o código da outra IA (só em ajustes triviais, se o dono pedir). Quem implementou corrige na própria branch e
-     responde cada achado no mesmo arquivo de revisão.
+     responde pela caixa com os IDs dos achados, os SHAs e as evidências. O revisor registra essas respostas no relatório após conferir.
+     Leia relatórios alheios com `git show <branch-ou-commit>:docs/revisoes/<tarefa>.md`; não mova a branch ou edite o worktree do outro.
    - Com o veredito "aprovado", o merge na branch de integração é feito pelo Claude (que roda no PC do usuário), ou por quem o usuário indicar.
+     O relatório entra junto por commit de documentação separado (por exemplo, cherry-pick do commit do relatório), preservando sua autoria.
      O que depende de hardware (GPU, áudio, captura) e que o revisor não puder executar é marcado como "não verificado" na revisão.
+
+6. **Decisões e estado:** a memória registra decisões estáveis e aponta para as fontes do estado atual.
+   Status, SHAs de entrega, contagens recentes e confirmações de recebimento ficam no quadro, na caixa e nos relatórios,
+   sem duplicação de estado volátil na memória. Evidências históricas continuam nos relatórios datados.
 
 ## Decisões que não devem ser revertidas sem falar com o usuário
 

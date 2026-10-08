@@ -1,7 +1,11 @@
 # Revisões cruzadas
 
 Regra do projeto ([`AGENTS.md`](../../AGENTS.md), item 5): **quem implementa não revisa.** O GPT revisa o Claude e o Claude revisa o GPT.
-Cada revisão é um arquivo `<tarefa>.md` nesta pasta, criado pelo revisor na branch revisada.
+Cada revisão é um arquivo `<tarefa>.md` nesta pasta, criado numa branch **do revisor**:
+`gpt/revisao-<tarefa>` ou `claude/revisao-<tarefa>`, a partir do SHA exato entregue.
+As checagens rodam num worktree próprio em `worktrees/<revisor>-revisao-<tarefa>`.
+O implementador mantém sua branch e pasta; o revisor não as modifica.
+Para código já integrado, use o SHA da integração que será auditado como ponto de partida.
 
 ## Formato
 
@@ -25,4 +29,8 @@ Cada revisão é um arquivo `<tarefa>.md` nesta pasta, criado pelo revisor na br
 <aprovado | aprovado com ressalvas | mudanças necessárias> — <uma frase>
 ```
 
-O autor responde cada achado no próprio arquivo. Depois das correções, o revisor confere e atualiza o veredito.
+O autor lê o relatório com `git show <branch-ou-commit>:docs/revisoes/<tarefa>.md` e responde pela caixa compartilhada,
+referenciando os IDs dos achados e os commits de correção na própria branch de implementação.
+Depois das correções, o revisor confere, registra as respostas no seu arquivo e atualiza o veredito.
+Publique o resultado na caixa com SHA revisado, commit do relatório, caminho e veredito.
+Na integração da tarefa aprovada, inclua o commit do relatório como documentação separada, preservando a autoria.
