@@ -91,3 +91,32 @@ About 30 games popular in Brazil:
   - hook never appears in fallbacks.
 - Validation rejects every rule violation. `merged` handles version precedence.
 - `cargo clippy -p duoclip-gamesdb --all-targets -- -D warnings` is clean and `cargo fmt` is applied.
+
+## Implementation notes (decisions the SPEC left open)
+
+- **Layout:** `model.rs` (types, `DbError`), `db.rs` (`embedded`/`from_json`/`validate`/`merged`/`lookup`), `select.rs` (`choose_backend`).
+  Extra public items: `MAX_DB_BYTES` (1 MiB), `DbError`, `GameEntry::{has_anticheat, allows_hook}`, `OsInfo::is_windows_11`, and `Default`
+  for `UserPrefs`.
+- **Anti-cheat JSON names:** `snake_case`, except `BattlEye`, which is `"battleye"` (`"battl_eye"` is accepted too). A name this version
+  does not know is read as `Other` (still counts as an anti-cheat), so a newer remote DB never breaks an older client.
+  `has_anticheat()` is true when any entry other than `None` is listed (`[]` and `[None]` mean "no anti-cheat").
+- **Validation extras:** the name is non-empty, `exe_names` is non-empty, exe names are bare file names (no path separators or characters
+  Windows forbids, no surrounding whitespace, non-empty stem before `.exe`), and `kernel_anticheat` requires a real anti-cheat (not just
+  `[None]`). `from_json` ignores unknown fields; `notes_pt` and `verified` may be omitted (`verified` defaults to `false`).
+- **`embedded()`** returns an empty DB (version 0) instead of panicking if the embedded JSON were ever broken; the tests make sure it is not.
+- **`merged`:** the DB with the higher `version` wins for ids present in both; on a tie `base` wins. Ids present on one side only are kept.
+  An entry of the losing side whose id or exe names collide with an already kept entry is dropped, so merging two valid DBs is always valid.
+  Result version = max of both; the winner's games come first.
+- **`lookup`:** the basename is taken after trimming whitespace and `"`; matching is Unicode-lowercase, exact (no wildcards). FiveM therefore
+  lists the known `FiveM_bNNNN_GTAProcess.exe` builds explicitly.
+- **`choose_backend`:**
+  - the hook is a primary only when it was *requested* (user preference `Hook`, or no usable preference and the game's `default_backend` is
+    `Hook`) AND every rule-3 condition holds. `hook_enabled_games` alone does not select the hook;
+  - candidates in order: user preference, game default, OS default. A candidate that is not in `allowed_backends` (or a blocked hook) is
+    skipped, and `reason_pt` says why;
+  - fallbacks are the other non-hook backends in OS-default order, limited to the game's `allowed_backends`;
+  - an inconsistent entry that allows no usable backend yields the plain OS default (never a panic, never the hook).
+- **Data:** 30 games in `games.json`, all `verified: false`, `default_backend: null`. Only games without anti-cheat list `hook`
+  (Minecraft Java, Valheim, Terraria, Among Us, Lethal Company, Phasmophobia, Stardew Valley, Hollow Knight); Minecraft Bedrock has no
+  anti-cheat but does not list `hook` (protected Store/GDK process). Entries marked "(a confirmar)" in the notes are the least certain
+  (Marvel Rivals, League of Legends/Vanguard, Phasmophobia).

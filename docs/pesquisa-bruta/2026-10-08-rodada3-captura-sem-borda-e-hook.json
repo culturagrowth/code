@@ -1,0 +1,613 @@
+[
+ {
+  "topic": "An optional injected game hook for DuoClip: safety, feasibility, and a per-game anti-cheat table for the games popular in Brazil",
+  "summary": "Anti-cheat systems let recording hooks into a game only when they come from a known vendor that the anti-cheat vendor has agreed to trust, usually by trusting that vendor's code-signing certificate. A new, unknown DuoClip hook would not be on any of those trust lists, even if it were properly signed. The OBS Knowledge Base article on its capture hook certificate shows this: when OBS changed the certificate, anti-cheat vendors (EAC, Vanguard, BattlEye) each had to update before OBS game capture worked again. Even OBS still depends on that coordination: in July 2026 a Vanguard update made OBS game capture output black until Riot shipped a fix. Valve's Trusted Mode FAQ for CS2 says Trusted Mode blocks all third-party software and has no whitelist. Valve also has a record of banning harmless in-process hooking: in 2023 AMD's Anti-Lag+ hooked CS2 engine functions, Valve answered with VAC bans and the warning \"DO NOT ENABLE ANTI-LAG/+\", players reported bans in Apex Legends too, and AMD withdrew the feature. Vendors react to unknown modules differently. EAC's public SDK headers define a 'forbidden module loaded' violation whose standard result is removing the player from the match; bans are a separate decision. BattlEye blocks unknown DLLs from loading. Roblox's Hyperion kicks with error 268. EA Javelin closes the game. FACEIT warns or refuses to run. VAC carries the highest ban risk, because its bans are delayed, permanent and shared across Valve's Source 2 games. Of the games on the Brazilian list, only Minecraft (Java Edition and probably Bedrock) has no client-side anti-cheat. Every other title, plus Gamers Club and FACEIT, uses an anti-cheat that blocks, kicks or may ban for unknown modules. OBS's own compatibility database also says Call of Duty and Marvel Rivals need OBS to run as admin for game capture, which DuoClip's no-admin rule rules out. Medal's own Valorant page says Medal does not read or modify Valorant's memory and uses standard Windows graphics APIs. That suggests Medal does not hook protected games and records them without injection (my inference). So, for the games these friends actually play, the non-injection capture path has to be excellent either way, and a hook would add value almost only for Minecraft. A hook also brings real costs: antivirus false positives (Medal has a whole set of whitelisting articles because injection triggers antivirus), crashes inside games (FiveM's source code blocks several third-party hook DLLs because they crashed games), constant maintenance (OBS has made dozens of hook fixes since 2022), GPL-2.0 obligations if OBS code is reused, and code-signing hurdles: EV certificates stopped giving instant SmartScreen trust in 2024, and Microsoft's Artifact Signing service does not accept individual developers in Brazil. Recommendation: leave the hook out of the MVP. If one is added later, make it opt-in per game and limited to a small, curated allowlist of games confirmed to have no anti-cheat (starting with Minecraft Java). It should never load into any game that is not on that list, and it should turn itself off whenever a kernel anti-cheat is running.",
+  "findings": [
+   {
+    "claim": "Anti-cheats let OBS's game-capture hook through because they trust its code-signing certificate. A new certificate needed vendor updates: EAC needed each game developer to switch to an updated module, and Vanguard needed its own update. Valve allows no injection outside its 'Untrusted' mode.",
+    "evidence": "The OBS Knowledge Base article 'Capture Hook Certificate Update' (seen through search snippets, last updated 2025-06-03) says the hook's certificate change 'may require updates to anti-cheat solutions that specifically exempt the current certificate'. Its table marks EAC as partial ('requires game developers to manually switch'), Vanguard as failing on the new-certificate-only build, and Valve as allowing no injection without -allow_third_party_software. The OBS 31.1 beta notes say the re-signed hook 'fixes game capture with games from Riot Games that use Vanguard'.",
+    "sources": [
+     "https://obsproject.com/kb/capture-hook-certificate-update",
+     "https://gitlab.dsi.universite-paris-saclay.fr/khuon-viet.pham/obs-studio/-/tags/31.1.0-beta1",
+     "https://pc.watch.impress.co.jp/docs/news/1646795.html"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "A new, unknown hook from DuoClip would not be on any anti-cheat trust list, even if signed. Getting onto those lists takes coordination with each vendor, and with EAC, each game developer.",
+    "evidence": "This follows from the finding above: trust is tied to specific known certificates, and even OBS needed per-vendor updates. I found no public process for small vendors to get listed. Riot's developer FAQ says there is 'absolutely no allow list for Vanguard'.",
+    "sources": [
+     "https://obsproject.com/kb/capture-hook-certificate-update",
+     "https://www.riotgames.com/en/DevRel/vanguard-faq"
+    ],
+    "confidence": "inferred"
+   },
+   {
+    "claim": "In July 2026 a Vanguard update made OBS game capture output black in Valorant and League of Legends, and Riot then pushed a Vanguard fix. Even the best-known hook depends on ongoing cooperation from the anti-cheat vendor.",
+    "evidence": "win.gg reports that on July 21, 2026 OBS said the issue was 'likely with the anti-cheat Vanguard', that Riot had been contacted, and that Riot 'has pushed out an update for Vanguard'.",
+    "sources": [
+     "https://win.gg/obs-game-capture-not-working-valorant-league-of-legends-fix/"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "OBS's own per-game compatibility database (current source) records which games block or restrict its hook. CS2 may need -allow_third_party_software. Roblox and Destiny 2 cannot be captured with Game Capture. Call of Duty, Marvel Rivals, Genshin Impact, Honkai: Star Rail, Zenless Zone Zero and Wuthering Waves may need OBS to run as admin. The League of Legends launcher cannot be game-captured.",
+    "evidence": "obs-studio plugins/win-capture/data/compatibility.json, at commit c5bcbca6 (2026-10-05). Entries: Counter-Strike 2 at line 20, linked to Valve's FAQ; Call of Duty (cod.exe) at line 202; Destiny 2 at line 230; League of Legends Launcher at line 258; Marvel Rivals at line 608; Roblox at lines 650 and 664.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/data/compatibility.json"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "CS2 (VAC with Trusted Mode): Trusted Mode blocks third-party files, and there is no whitelist. Unsigned injection makes the game start in insecure mode, which bars VAC-secured servers. The -allow_third_party_software option can lower Trust Factor. Verdict for DuoClip: never hook.",
+    "evidence": "Valve's Steam Support FAQ, seen through search snippets: Trusted Mode 'blocks third-party files from interacting with the game'; no software is pre-approved because legitimate programs get hijacked by cheats; Trust Factor 'may be negatively affected' outside Trusted Mode. OBS's compatibility entry links to this FAQ.",
+    "sources": [
+     "https://help.steampowered.com/faqs/view/09A0-4879-4353-EF95",
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/data/compatibility.json"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "VAC has banned players for harmless in-process hooking. In October 2023 AMD Anti-Lag+ hooked CS2 engine DLL functions, Valve issued VAC bans and warned 'DO NOT ENABLE ANTI-LAG/+', ban reports also came from Apex Legends, and AMD disabled the feature in driver 23.10.2.",
+    "evidence": "News coverage quotes Valve saying the feature 'is implemented by detouring engine dll functions' and that tampering results in a VAC ban. AMD said it was working with Valve. PCGamesN and TweakTown report AMD pulled Anti-Lag+. Apex is named among the titles with ban reports.",
+    "sources": [
+     "https://www.guru3d.com/story/amd-in-counterstrike-2-can-result-in-vac-ban",
+     "https://www.pcgamesn.com/amd/anti-lag-plus-pulled",
+     "https://www.tweaktown.com/news/93852/amd-disables-anti-lag-tech-in-all-games-with-new-driver-after-cs2-issues-and-vac-banning/index.html",
+     "https://www.windowscentral.com/gaming/pc-gaming/amds-anti-lag-feature-is-wreaking-havoc-for-counter-strike-2-apex-legends-and-call-of-duty-players"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Dota 2 (VAC): I found no evidence of a Trusted Mode like CS2's. Valve does act against third-party tools: a 2023 patch broke Overwolf features, and a honeypot banned about 40,000 accounts. VAC bans in one Source 2 game apply to the others. Verdict: never hook.",
+    "evidence": "esports.gg on the Dota 2 update that disabled third-party tooling. Valve's developer wiki lists Dota 2 under VAC and says bans extend across Source 2 games. The wiki also notes past false bans for recording software and overlays that were reversed after review.",
+    "sources": [
+     "https://esports.gg/news/dota-2/dota-2-update-kills-third-party-applications-including-overwolf/",
+     "https://developer.valvesoftware.com/wiki/VAC"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Valorant and League of Legends (Riot Vanguard, a kernel-level anti-cheat; in League since patch 14.9 on April 30, 2024): Riot says there is no allow list for third-party apps. Tools that cannot fit Vanguard's rules 'will not be allowed'. Verdict: never hook.",
+    "evidence": "The Riot DevRel Vanguard FAQ (search snippets) answers 'No' to allow-list requests and says there is 'absolutely no allow list for Vanguard'. Riot's League support FAQ describes a client plus a kernel-mode driver and a 'Vanguard has blocked something from loading' notification. I found no public statement on whether a harmless unknown module leads to a ban or only a block.",
+    "sources": [
+     "https://www.riotgames.com/en/DevRel/vanguard-faq",
+     "https://support-leagueoflegends.riotgames.com/hc/articles/24169857932435"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Medal says it does not read or modify Valorant's memory and uses standard Windows graphics APIs. That suggests Medal records Vanguard games without its injected hook and decides the capture method per game.",
+    "evidence": "In search snippets, Medal's Valorant developer page answers 'No' to whether Medal can get players Vanguard-banned. Medal's antivirus article separately says Medal 'injects into your games', so injection is clearly not used in every game. Treat this as a vendor claim; I found no independent test.",
+    "sources": [
+     "https://medal.tv/developer/valorant",
+     "https://support.medal.tv/support/solutions/articles/48001166446"
+    ],
+    "confidence": "inferred"
+   },
+   {
+    "claim": "In Easy Anti-Cheat (Fortnite, Apex Legends, Rust, Rocket League), a disallowed module loaded into the game is a defined integrity violation, and the standard result is removing the player from the session. Temporary and permanent bans are separate reasons that the backend or publisher decides.",
+    "evidence": "EOS SDK header eos_anticheatclient_types.h (EOS-Contrib/eos_plugin_for_unity, commit f876859, lines 22-58) defines EOS_ACCVT_ForbiddenModuleLoaded = 9, 'A disallowed code module was loaded into the game process'. Lines 101-107 say the violation message must be shown to the player. eos_anticheatcommon_types.h, lines 51-83, defines the RemovePlayer action and separate ClientViolation, TemporaryBanned and PermanentBanned reasons. The easy.ac Account Bans page says EAC flags accounts and publishers decide on bans.",
+    "sources": [
+     "https://github.com/EOS-Contrib/eos_plugin_for_unity/blob/f876859832cbd92f6ee8ebd4424d34bae857e10f/Assets/Plugins/iOS/EOSSDK.framework/Headers/eos_anticheatclient_types.h",
+     "https://github.com/EOS-Contrib/eos_plugin_for_unity/blob/f876859832cbd92f6ee8ebd4424d34bae857e10f/Assets/Plugins/iOS/EOSSDK.framework/Headers/eos_anticheatcommon_types.h",
+     "https://easy.ac/support/articles"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "EAC blocks overlays that are not on its list of supported versions. In Watch Dogs 2 it blocked the RTSS overlay because the list of supported overlay versions was out of date.",
+    "evidence": "Guru3D report on the anti-cheat in Watch Dogs 2 blocking RTSS.",
+    "sources": [
+     "https://www.guru3d.com/story/update-watch-dogs-2-anti-cheat-system-blocks-rtss-overlay-software/"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Fortnite (EAC plus BattlEye): BattlEye stops third-party DLLs from loading into the game ('Blocked loading of file'). Epic says these notices are not related to in-game kicks. Verdict: never hook.",
+    "evidence": "Epic's help article on the BattlEye 'Blocked loading of file' message. It also tells players to remove stray d3d9.dll, dxgi.dll or dsound.dll files from the game folder. An OBS forum thread claims an OBS plugin update caused Fortnite bans, but this is unverified.",
+    "sources": [
+     "https://www.epicgames.com/help/technical-support-c-202300000001619/third-party-support-c-202300000001668/info-blocked-loading-of-file-error-in-the-battleye-launcher-window-a202300000015762",
+     "https://obsproject.com/forum/threads/obs-vertical-update-causing-anti-cheat-detections-and-permanent-ban-on-fortnite-streeamers.176462/"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Apex Legends and Rust use EAC. I found no game-specific statement about recording software for either. Apex was named among the Anti-Lag+ ban reports. Verdict: never hook.",
+    "evidence": "See the EAC and Anti-Lag+ findings. Apex- and Rust-specific allowlists were not found.",
+    "sources": [
+     "https://www.pcgamesn.com/amd/anti-lag-plus-pulled",
+     "https://obsproject.com/kb/capture-hook-certificate-update"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Rainbow Six Siege (BattlEye): BattlEye has blocked even Ubisoft's own overlay DLL. OBS is trusted through its certificate; the KB uses R6 as its BattlEye example. Verdict: never hook.",
+    "evidence": "A devtrackers.gg post on BattlEye blocking the Uplay overlay in R6. The OBS KB table lists BattlEye (Rainbow Six Siege).",
+    "sources": [
+     "https://devtrackers.gg/r6-siege/p/cd94ac78-battle-eye-is-blocking-uplay-overlay",
+     "https://obsproject.com/kb/capture-hook-certificate-update"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "PUBG (BattlEye plus PUBG's own anti-cheat measures): PUBG's 2017-2018 anti-cheat measures also blocked capture software such as ShadowPlay and ReShade. Players were blocked from playing, not banned, and could submit software for review. Verdict: never hook.",
+    "evidence": "DSOGaming and PCGamesInsider coverage of PUBG Corp's anti-cheat measures; the 2017 guidance said 'You will not be banned for having it' but the game could not be played. I found no current KRAFTON statement about recording software.",
+    "sources": [
+     "https://www.dsogaming.com/news/playerunknowns-battlegrounds-wont-work-with-reshade-installed-may-also-block-nvidia-shadowplay",
+     "https://www.pcgamesinsider.biz/news/66630/pubg-corp-testing-anti-cheat-solution-to-block-third-party-applications/"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "GTA V Online has used BattlEye since September 2024. Rockstar says ReShade and Special K are disabled during play, and BattlEye is required for GTA Online. Verdict: never hook.",
+    "evidence": "Rockstar Support's 'BattlEye Troubleshooting for GTA V' and 'BattlEye is required to play GTA Online' articles, seen through search snippets.",
+    "sources": [
+     "https://support.rockstargames.com/en-US/articles/ocorZr1KpQE8WvoHE3gBG/battleye-troubleshooting-for-grand-theft-auto-v",
+     "https://support.rockstargames.com/en-US/articles/3XfrNcY1EJFkCi7LanUvR1/battleye-is-required-to-play-gta-online-alert-screen"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "FiveM's client source code refuses to load a list of third-party hook and overlay DLLs. The comments give crash or breakage as the reason: Discord's overlay hook (breaks input), NVIDIA ShadowPlay's capture DLL (linked to graphics init failures), PlayClaw ('top crasher'), Fraps, and Overwolf in RedM. OBS's hook is not on the list. An unknown new hook that crashes FiveM could be added. Verdict: no hook.",
+    "evidence": "citizenfx/fivem code/client/citicore/FileMapping.Win32.cpp, commit a74c2cc, lines 566-670, where the DLL loader returns an error for the listed module names. I did not research FiveM's or individual servers' ban policies for harmless tools (not found).",
+    "sources": [
+     "https://github.com/citizenfx/fivem/blob/a74c2ccf0a56546dbb591b4545c643f56acebd3d/code/client/citicore/FileMapping.Win32.cpp"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Warzone and Call of Duty (Ricochet, a kernel-level anti-cheat): OBS lists Call of Duty as possibly needing OBS run as admin for Game Capture, which conflicts with DuoClip's no-admin rule. Recent CoD titles require TPM 2.0 and Secure Boot. Verdict: never hook.",
+    "evidence": "OBS compatibility.json line 202 (cod.exe). Activision's 2021 Ricochet announcement. Coverage of the Battlefield 6 and Black Ops 7 TPM and Secure Boot requirements. PC Watch lists RICOCHET among anti-cheats that support OBS 31's new certificate. I found no Ricochet statement about unknown recording tools.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/data/compatibility.json",
+     "https://www.callofduty.com/blog/2021/10/ricochet-anti-cheat-initiative-for-call-of-duty",
+     "https://www.thesixthaxis.com/?p=462600",
+     "https://pc.watch.impress.co.jp/docs/news/1646795.html"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Marvel Rivals (NetEase's in-house anti-cheat): OBS says the game may need admin for Game Capture. NetEase has publicly called the Blitz stats overlay 'cheating software'. Verdict: never hook.",
+    "evidence": "OBS compatibility.json line 608. Dot Esports on NetEase flagging Blitz. ExitLag says the anti-cheat is in-house and its kernel components are unconfirmed (secondary).",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/data/compatibility.json",
+     "https://dotesports.com/marvel/news/marvel-rivals-bans-top-stats-tool-warning-players-against-using-cheating-software",
+     "https://www.exitlag.com/blog/pt/marvel-rivals-anti-cheat/"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "EA FC 26 (EA Javelin, kernel-level): EA says Javelin closes the game if it detects cheat tools, debuggers or 'other conflicting software'. I found no allowlist for recording tools. Verdict: never hook.",
+    "evidence": "EA Help's EA anticheat page and EA's FC 26 PC deep-dive, which confirms kernel level and that it runs only while the game is running.",
+    "sources": [
+     "https://help.ea.com/en/help/pc/ea-anticheat",
+     "https://www.ea.com/games/ea-sports-fc/fc-26/news/pitch-notes-fc26-pc-deep-dive"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Rocket League added EAC on April 28, 2026. Community mods, including BakkesMod (an injected DLL), no longer run in online play, and BakkesMod stopped active development. Verdict: never hook online. Playing offline with EAC turned off is possible but not worth supporting.",
+    "evidence": "GamingOnLinux reproduces Psyonix's announcement (EAC required for online PC play; mods only with EAC off). Trophi.ai and Mein-MMO report on BakkesMod.",
+    "sources": [
+     "https://www.gamingonlinux.com/2026/04/rocket-league-adds-easy-anti-cheat-with-steam-deck-linux-still-supported/",
+     "https://www.trophi.ai/post/rocket-league-updates-after-eac-bakkesmod-ballchasing-and-whats-actually-different-now"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Roblox (Hyperion, formerly Byfron) blocks OBS Game Capture. Injecting overlays such as Discord's or GeForce Experience's can cause error 268 kicks. Verdict: never hook.",
+    "evidence": "OBS compatibility.json lines 650-664 ('Roblox cannot be captured using Game Capture'). OBS forum reports from 2023 onward. Third-party guides on error 268.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/data/compatibility.json",
+     "https://obsproject.com/forum/threads/obs-doent-capture-only-roblox-trough-game-capture.167601",
+     "https://www.technerdiness.com/roblox/roblox-error-code-268-fix/"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Minecraft Java Edition has no client-side anti-cheat. It is an OpenGL game (javaw.exe) that OBS game capture supports, with a troubleshooting guide. Minecraft Bedrock moved from UWP to GDK in 1.21.120. I found no anti-cheat for it, and whether hooking works there is unverified. Minecraft is the only candidate for a hook on the user's list.",
+    "evidence": "OBS compatibility.json line 188 lists only a troubleshooting note for Java Edition; it blocks only the Gaming Services UI window class (lines 160-174). Medal's black-screen article lists a known Windows 11 24H2 frozen-clip issue for OpenGL games such as Minecraft. A community repository documents Bedrock's move to GDK. Third-party clients such as Badlion or Lunar may add their own protections (not researched).",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/data/compatibility.json",
+     "https://support.medal.tv/support/solutions/articles/48000922110-black-clips-black-screen",
+     "https://github.com/inbob1/mcbe-on-linux"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Free Fire is a mobile game played on PC through emulators. Garena treats third-party software that interacts with the game client as cheating. Since August 1, 2026, emulator players are excluded from the Ranked and Weapon leaderboards but not banned. I found no source on injecting into emulators. Verdict: never inject into an emulator; capture the emulator window without injection.",
+    "evidence": "FFMania on the leaderboard exclusion. Sportskeeda's list of bannable activities, citing Garena's support pages.",
+    "sources": [
+     "https://www.freefiremania.com.br/news/free-fire-excludes-emulator-and-shared-accounts-from-ranking.html",
+     "https://sportskeeda.com/free-fire/list-activities-free-fire-can-get-account-banned"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "FACEIT AC (kernel-level): software not on FACEIT's lists will 'likely give you a warning'. FACEIT says only the latest official OBS release is compatible and it cannot guarantee modified OBS builds. FACEIT also ends Windows 10 support on October 14, 2026, so the friends on Windows 10 cannot play FACEIT anyway. Verdict: never hook.",
+    "evidence": "FACEIT support articles 'What is deemed to be a cheat?', 'Troubleshooting issues with OBS' and 'Windows Security Requirements FAQ' (search snippets), and dust2.us coverage.",
+    "sources": [
+     "https://support.faceit.com/hc/en-us/articles/360015788779-What-is-deemed-to-be-a-cheat",
+     "https://support.faceit.com/hc/en-us/articles/360015763620-Troubleshooting-issues-with-OBS",
+     "https://support.faceit.com/hc/en-us/articles/23117181142556",
+     "https://www.dust2.us/news/66964/faceit-announces-major-anti-cheat-update"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Gamers Club AC (Brazil, its own anti-cheat): a user-posted alert shows it tells players to close debuggers, memory scanners and DLL injectors. I found no official allowlist, no OBS or Medal statement, and no technical documentation. Verdict: never hook.",
+    "evidence": "Gamers Club's official Steam group describes its own anti-cheat. Steam community threads quote the GC AC alert text (2022) and blocked-file warnings (2020). These are anecdotes.",
+    "sources": [
+     "https://steamcommunity.com/groups/GCowner",
+     "https://steamcommunity.com/app/730/discussions/0/1640919737480609124",
+     "https://steamcommunity.com/app/730/discussions/0/3371530631540786024"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "How the vendors handle an unknown module, ban versus block. EAC: removes the player, with bans decided separately. BattlEye: blocks the DLL from loading. VAC: bans, delayed and permanent, with the Anti-Lag+ precedent; Trusted Mode blocks. Vanguard: blocks; ban behaviour for harmless modules not found. FACEIT: warns or refuses to run. Hyperion: kicks (error 268). Javelin: closes the game. Ricochet and NetEase: not found.",
+    "evidence": "Combined from the findings above. Separately, igorslab reports bans in BattlEye and EAC games tied to RGB control software, showing harmless tools can be swept up.",
+    "sources": [
+     "https://github.com/EOS-Contrib/eos_plugin_for_unity/blob/f876859832cbd92f6ee8ebd4424d34bae857e10f/Assets/Plugins/iOS/EOSSDK.framework/Headers/eos_anticheatcommon_types.h",
+     "https://www.epicgames.com/help/technical-support-c-202300000001619/third-party-support-c-202300000001668/info-blocked-loading-of-file-error-in-the-battleye-launcher-window-a202300000015762",
+     "https://help.steampowered.com/faqs/view/09A0-4879-4353-EF95",
+     "https://help.ea.com/en/help/pc/ea-anticheat",
+     "https://www.igorslab.de/en/?p=163733"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "How the OBS hook is built, at a high level, as a reference. A separate helper executable for each bitness loads the hook DLL. By default OBS uses a Windows message-hook loading method, labelled 'anti-cheat compatibility hook'. The DLL wraps the graphics API's present call (OBS uses the Microsoft Detours library) for D3D8, 9, 10, 11 and 12, OpenGL and Vulkan. Frames reach OBS as a shared GPU texture, with a shared-memory fallback, coordinated through named events and mutexes. Vulkan is covered by an implicit Vulkan layer.",
+    "evidence": "In obs-studio at commit c5bcbca6: game-capture.c (the anti_cheat_hook setting defaults to true at line 2117; the helper process starts at lines 878-955); shared/obs-inject-library/inject-library.c (message-hook path near line 117); graphics-hook/dxgi-capture.cpp lines 323-336 (Detours); graphics-hook/d3d11-capture.cpp lines 17-23 and 98 (shared texture); shared/obs-hook-config/graphics-hook-info.h (IPC object names, capture types at lines 80-81); graphics-hook/obs-vulkan64.json (layer manifest). Microsoft's SetWindowsHookEx documentation notes that the hook DLL must match the target process's bitness, and that global hooks affect every application on the desktop.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/tree/master/plugins/win-capture",
+     "https://github.com/obsproject/obs-studio/tree/master/shared/obs-hook-config",
+     "https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/winuser/nf-winuser-setwindowshookexw.md"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "An implicit Vulkan layer loads automatically into every Vulkan application, including games protected by anti-cheat, unless its manifest restricts it. OBS registers its layer per user when not elevated. The Vulkan loader offers an 'enable_environment' manifest field so a layer loads only when a specific environment variable is set. Any DuoClip Vulkan path would need that kind of restriction to respect a per-game allowlist.",
+    "evidence": "The Khronos Vulkan-Loader LoaderLayerInterface.md says implicit layers 'are automatically enabled, unless overridden' (lines 94-95). It lists the HKLM and HKCU ImplicitLayers registry keys (lines 169-190) and documents disable_environment and enable_environment (lines 1787-1810). OBS game-capture-file-init.c lines 280-318 falls back to HKCU. The OBS layer manifest uses disable_environment only.",
+    "sources": [
+     "https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderLayerInterface.md",
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/game-capture-file-init.c",
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/graphics-hook/obs-vulkan64.json"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Maintaining a hook is ongoing work. Since 2022, about 45 OBS commits have touched the hook and injection code, including crash and leak fixes (a Vulkan DirectDisplay crash, a null dereference, a D3D12 reference leak, a Vulkan race condition) and hook version bumps up to 1.8.8 in June 2026.",
+    "evidence": "git log of plugins/win-capture/graphics-hook, shared/obs-hook-config, inject-helper and shared/obs-inject-library since 2022-01-01 in the OBS repository. graphics-hook-ver.h defines version 1.8.8.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/commits/master/plugins/win-capture/graphics-hook"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Injected recording hooks are a known source of game crashes. Medal has a 'game crashing on boot/clip' support article whose first step is to close Medal. FiveM blocks several capture and overlay hook DLLs over crashes. OBS's hook has crashed Vulkan applications such as TouchDesigner.",
+    "evidence": "The Medal support article; the FiveM source (see above); an OBS forum thread on TouchDesigner crashing in graphics-hook64.dll.",
+    "sources": [
+     "https://support.medal.tv/support/solutions/articles/48001160690",
+     "https://github.com/citizenfx/fivem/blob/a74c2ccf0a56546dbb591b4545c643f56acebd3d/code/client/citicore/FileMapping.Win32.cpp",
+     "https://obsproject.com/forum/threads/vulkan-application-touchdesigner-crashing-in-graphics-hook64-dll-for-many-users.173423"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Injection triggers antivirus false positives even for an established vendor. Medal keeps vendor-specific whitelisting guides and asks antivirus companies to whitelist it. A new DuoClip hook would face the same problem without Medal's reputation or vendor relationships.",
+    "evidence": "Medal's 'How to whitelist Medal in your Anti-Virus' article ties detections to Medal injecting into games, and links per-vendor guides (Defender, Avast, AVG, Bitdefender, Malwarebytes, Norton and others).",
+    "sources": [
+     "https://support.medal.tv/support/solutions/articles/48001166446-how-to-whitelist-medal-in-your-anti-virus"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Code signing will not solve this cheaply for a small Brazilian developer. Since 2024, EV certificates no longer give instant SmartScreen reputation, and each new build starts with none. Since June 2023, code-signing keys must be kept on certified hardware. Microsoft Artifact Signing (formerly Trusted Signing) issues public-trust certificates only to individual developers in the US and Canada and to organizations in the US, Canada, the EU and the UK. Signing does not put a hook on any anti-cheat allowlist.",
+    "evidence": "Microsoft Learn's SmartScreen reputation page and a ToDesktop write-up (search snippets). Venafi on the CA/B Forum requirement. The Artifact Signing FAQ and DevClass's January 2026 general-availability coverage.",
+    "sources": [
+     "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation",
+     "https://www.todesktop.com/blog/posts/windows-apps-psa-ev-certs-do-not-grant-immediate-reputation-anymore",
+     "https://venafi.com/blog/new-ca-b-forum-requirements-for-code-signing-start-in-june-will-you-be-ready",
+     "https://learn.microsoft.com/azure/trusted-signing/faq",
+     "https://devclass.com/2026/01/14/code-signing-windows-apps-may-be-easier-and-more-secure-with-new-azure-artifact-service/"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "OBS is licensed GPL-2.0, so a hook derived from OBS code must be released under the GPL with its source made available to the people DuoClip is distributed to, the friends included. Earlier research found that Medal ships its derived hook as a separate GPL component with a source offer; I did not re-verify that here.",
+    "evidence": "The COPYING file at the root of the obs-studio repository is GNU GPL version 2. Searches this session did not find Medal's source offer, so it rests on the prior research.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/COPYING"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "The industry is moving away from injecting into games. Discord rebuilt its overlay in March 2025 so it no longer hooks into the game window, saying this improves performance and works with a larger share of games. PCWorld ties the old hooking design to anti-cheat incompatibility.",
+    "evidence": "Discord's Q1 2025 player release blog and PCWorld's review.",
+    "sources": [
+     "https://discord.com/blog/player-release-q12025",
+     "https://www.pcworld.com/article/2649334/discord-new-pc-app-is-faster-cleaner-with-a-fresh-coat-of-paint.html"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Some projects reuse another vendor's signed hook binary to borrow anti-cheat trust; for example, the obs-rs README describes the OBS hook as 'signed and whitelisted by all anti-cheats'. That approach is out of scope for this research and is not recommended.",
+    "evidence": "The hzqst/obs-rs README, seen in search results. Noted only to mark it as out of scope.",
+    "sources": [
+     "https://github.com/hzqst/obs-rs"
+    ],
+    "confidence": "primary"
+   }
+  ],
+  "design_recommendations": [
+   "Leave the hook out of the MVP. Put the effort into the non-injection path (Desktop Duplication cropped to the game window, with WGC where the yellow border is not an issue). Every popular Brazilian title except Minecraft has to use that path anyway, and Medal itself appears to record Vanguard games without injecting.",
+   "If a hook is added later, make it an explicit opt-in per game, called something like 'maximum performance mode'. It should be off by default and allowed only for games on a curated database, shipped with the app and signed, of titles confirmed to have no client-side anti-cheat. Start with Minecraft Java Edition and add Bedrock only after testing.",
+   "Use deny-by-default. Never load the hook into any process that is not on the allowlist. Never use global (system-wide) hooks. Avoid an always-on implicit Vulkan layer; if one is ever needed, restrict it so it loads only for allowlisted processes (for example with the loader's enable_environment field).",
+   "Turn the hook off entirely, including for allowlisted games, whenever a kernel or platform anti-cheat is running on the PC (Vanguard, FACEIT AC, Gamers Club AC, EAC, BattlEye, Javelin, Ricochet or Hyperion services). Fall back to non-injection capture so no hook is present while protected games or platforms are in use.",
+   "Keep a hard denylist that the user cannot override: CS2, Dota 2, Valorant, League of Legends, Fortnite, Apex Legends, Rust, Rainbow Six Siege, PUBG, GTA V (Legacy and Enhanced), FiveM, Call of Duty/Warzone, Marvel Rivals, EA FC, Rocket League, Roblox, and any Android emulator (Free Fire). Do not tell users to use -allow_third_party_software for CS2.",
+   "Respect the no-admin rule. Never request elevation to hook. OBS's compatibility data shows CoD and Marvel Rivals need admin for game capture, which confirms that the hook does not belong in those games.",
+   "If OBS's hook code is reused, ship the hook as a separate GPL-2.0 component with its source available to the friends. Plan for code signing early: Artifact Signing is not available to individual developers in Brazil, an OV or EV certificate on a hardware token is needed, and SmartScreen and antivirus warnings should still be expected at first.",
+   "Budget for maintenance. Handle crashes defensively, for example by having the hook disable itself after a failure for that game. Collect crash telemetry from the friends, and keep an instant remote kill switch in the per-game database.",
+   "Measure before building. Compare frame-time overhead and capture quality in Minecraft between the non-injection path and an OBS-style hook. Only build the hook if there is a clear gain, such as capturing while the window is covered or alt-tabbed, which avoids Medal's 'inactive game' placeholder."
+  ],
+  "open_questions": [
+   "Whether Vanguard, Ricochet, NetEase's anti-cheat, Javelin and Gamers Club AC respond to a harmless unknown module with only a block or kick, or with a ban: no public statement was found.",
+   "Whether Medal really chooses its capture method per game, using no hook in anti-cheat titles, beyond its claim on the Valorant page. Testing Medal's logs per game would confirm this.",
+   "Whether the GDK build of Minecraft Bedrock (1.21.120 and later) can be hooked without admin, and whether any anti-cheat ships with it.",
+   "Whether third-party Minecraft Java clients popular in Brazil (for example Badlion or Lunar) or large servers add client-side protections that react to injected DLLs.",
+   "FiveM's and popular Brazilian FiveM servers' policies on harmless recording hooks, which were not researched in detail.",
+   "The current OBS anti-cheat compatibility table after June 2025, and the final outcome of the July 2026 Vanguard fix. Both hosts were unreachable from this environment.",
+   "The measured performance gap between an injected hook and Desktop Duplication cropped to the game window on Windows 10 22H2 with NVENC, AMF or QSV, which was not benchmarked here."
+  ]
+ },
+ {
+  "topic": "The WGC yellow border on Windows 10 (19041-19045) and how Medal avoids it; non-injection alternatives with no border",
+  "summary": "On Windows 10 22H2 (19045) the yellow WGC border cannot be turned off through any documented API. GraphicsCaptureSession.IsBorderRequired and GraphicsCaptureAccess.RequestAccessAsync(Borderless) both belong to UniversalApiContract v12. Microsoft Learn says that contract starts at build 10.0.20348 (\"Windows 10, version 2104\", a Server 2022 build), and the SDK header guards both behind CONTRACT_VERSION >= 0xc0000. Windows 10 clients stop at contract v10 (19041). On 19045 the IsBorderRequired call fails with E_NOINTERFACE, and an independent app (OpenAI Codex, issue #25178) hit exactly this. The consent toggle in Settings (Privacy & security > Graphics capture / Screenshot borders) is Windows 11 only, per Medal's own support article and wcap's build-22000 gate. I found no widely used hack, DWM trick or private interface that removes the border on 19041-19045. Microsoft Q&A users only report it disappearing for cloaked in-app windows. The wcap author says it is Windows 11 only, OBS closed its Windows 10 border issue as \"not planned\", and ShaderGlass's issue is unresolved. A hack would mean patching or injecting into dwm.exe, which needs admin or SYSTEM and goes against the project's safety rules.\n\nMedal shows no border on Windows 10 because by default it does not use WGC at all. Its defaults are PreferGameCapture=true and AdvancedWindowCapture/ForceWindowCapture/ExperimentalCapture=false. 'Advanced Window Capture' is the only Medal mode that uses WGC (log: set.windowsGraphicsCapture -> 'Saving Advanced Window Capture'), and Medal says the yellow box appears only when that mode is on. Medal has two default paths. (a) For games where it can inject, it injects an OBS-derived hook (Host\\medal-hook64.dll), copies the game's backbuffer to a shared GPU texture (zero-copy) and records from that. (b) For games where it does not inject (2023 logs on build 19045: Roblox Win32 client), it uses 'WindowCaptureStandard'. That mode is DXGI Desktop Duplication of the monitor, cropped to the game window's rect ('Capture area is 0,24,1920,1040'). The log shows an 'MCaptureSCR::RunThreadDXGI ... m_cpDXGIOutputDuplication' failure with E_ACCESSDENIED, and Medal shows inactiveGame.png whenever the game loses focus, because a screen crop would otherwise record whatever window is on top. Desktop Duplication never draws a border.\n\nMedal's 'no lag' comes from: a zero-copy shared texture from the hook, or the cheap GPU-side duplicate-and-crop; the hardware encoder ('a264hw - hardware encoding', Encoder=GPU); encoded packets kept in RAM (InMemoryBuffer=true, 180 MB for 120 s at 10 Mbps); modest defaults (720p, 30 fps in 2023 and 60 fps in 2026, 10-15 Mbps, VFR); recorder process priority High; OBS-style SetMaximumFrameLatency ('IncreaseFrameLatency success'); attempts to raise GPU priority (these fail without admin: 'Failed to enable base priority privilege!'); a HAGS check; and turning Windows Game Mode off by default ('Disabling windows game mode to improve performance..', default WindowsGameModeDisabled=true).\n\nFor DuoClip, the no-injection, no-admin, no-border path on Windows 10 is DXGI Desktop Duplication of the game's monitor, cropped on the GPU to the game's client rect, with Medal-style focus/occlusion handling. OBS (Display Capture auto mode) and Sunshine (default 'ddx') both use DXGI duplication as their default. WGC with IsBorderRequired(false) should be used only on Windows 11 and must be feature-detected. Injection is not a safe option for a private app. Anti-cheats exempt specific signed hooks (OBS's certificate), CS2 Trusted Mode blocks unsigned injection, and an unsigned DuoClip hook would not be exempt.",
+  "findings": [
+   {
+    "claim": "GraphicsCaptureSession.IsBorderRequired requires build 10.0.20348 (UniversalApiContract v12, 'Windows 10, version 2104', a Windows Server 2022 build). No Windows 10 client build (19041-19045) has it.",
+    "evidence": "Microsoft Learn's version table for IsBorderRequired (from search snippet): 'Windows 10, version 2104 (introduced in 10.0.20348.0)', 'Windows.Foundation.UniversalApiContract (introduced in v12.0)'. Windows SDK header windows.graphics.capture.h (local copy) line 1381: IGraphicsCaptureSession3 (get/put_IsBorderRequired) is guarded by '#if WINDOWS_FOUNDATION_UNIVERSALAPICONTRACT_VERSION >= 0xc0000' (v12). IGraphicsCaptureSession2 (IsCursorCaptureEnabled, documented as 10.0.19041) is guarded by >= 0xa0000 (v10) at line 1342. An OBS maintainer remarked that the build cited in the API docs is a server version. The winrt-api markdown source (graphicscapturesession_isborderrequired.md) has no version table; Learn generates it from metadata.",
+    "sources": [
+     "https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.isborderrequired",
+     "https://github.com/MicrosoftDocs/winrt-api/blob/docs/windows.graphics.capture/graphicscapturesession_isborderrequired.md",
+     "scratchpad/dl-wgchdr/windows.graphics.capture.h lines 1342, 1381",
+     "https://obsproject.com/forum/threads/yellow-border.162264/"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless) is in the same contract (v12, build 20348+). Disabling the border needs user consent, and a packaged app also needs the graphicsCaptureWithoutBorder (uap11) capability. If the user denies consent, setting false silently has no effect, and any other app requiring the border keeps it visible.",
+    "evidence": "Header line 1111: IGraphicsCaptureAccessStatics (RequestAccessAsync) guarded by CONTRACT_VERSION >= 0xc0000. winrt-api graphicscapturesession_isborderrequired.md lines 23-25: 'your app must get consent from the user by calling GraphicsCaptureAccess.RequestAccessAsync, passing in ... Borderless ... If the user denies access, setting this property to false will succeed, but the value will be ignored ... if the IsBorderRequired property is set to true for the same window or display by other apps on the device, the border will be displayed.' windows-dev-docs app-capability-declarations.md line 90: graphicsCaptureWithoutBorder 'is defined in the uap11:Capability element'. graphicscaptureaccesskind.md: Borderless=0, Programmatic=1.",
+    "sources": [
+     "https://github.com/MicrosoftDocs/winrt-api/blob/docs/windows.graphics.capture/graphicscapturesession_isborderrequired.md",
+     "https://github.com/MicrosoftDocs/winrt-api/blob/docs/windows.graphics.capture/graphicscaptureaccess_requestaccessasync_1551329835.md",
+     "https://github.com/MicrosoftDocs/windows-dev-docs/blob/docs/uwp/packaging/app-capability-declarations.md",
+     "scratchpad/dl-wgchdr/windows.graphics.capture.h line 1111"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "The WGC border is drawn by the system around whatever is being captured, display or window. Capturing a monitor with WGC instead of a window does not avoid it.",
+    "evidence": "Microsoft screen-capture doc (windows-dev-docs hub/apps/develop/media-authoring-processing/screen-capture.md line 16): 'a yellow notification border is drawn by the system around the actively captured item. In the case of multiple simultaneous capture sessions, a yellow border is drawn around each item being captured.' OBS PR #2208 (jpark37, 2019) adding WGC: 'There is a bright, yellow border added to the original window (but not the OBS view of it).'",
+    "sources": [
+     "https://github.com/MicrosoftDocs/windows-dev-docs (hub/apps/develop/media-authoring-processing/screen-capture.md, line 16)",
+     "https://github.com/obsproject/obs-studio/pull/2208"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "On Windows 10 22H2 build 19045, trying to set IsBorderRequired fails with E_NOINTERFACE (0x80004002). Code must feature-detect it, as OBS and Sunshine do with ApiInformation.IsPropertyPresent.",
+    "evidence": "openai/codex issue #25178: OS build 10.0.19045, 'SetIsBorderRequired failed ... (0x80004002)'. OBS libobs-winrt/winrt-capture.cpp lines 232-235 and 316-320: winrt_capture_border_toggle_supported() = ApiInformation::IsPropertyPresent(\"Windows.Graphics.Capture.GraphicsCaptureSession\", \"IsBorderRequired\"), then RequestAccessAsync(Borderless).get() and session.IsBorderRequired(false). Sunshine display_wgc.cpp lines 150-151 has the same guard.",
+    "sources": [
+     "https://github.com/openai/codex/issues/25178",
+     "https://github.com/obsproject/obs-studio/blob/master/libobs-winrt/winrt-capture.cpp",
+     "https://github.com/LizardByte/Sunshine/blob/master/src/platform/windows/display_wgc.cpp"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "The user-facing toggle that lets apps turn off the border exists only on Windows 11. Its location changes by build: Privacy & security > Graphics capture / 'Screenshot borders' on earlier builds, and other paths on 24H2+.",
+    "evidence": "Medal 'What is Advanced Window Capture?' (search snippet): go to Privacy & security > Graphics capture and enable the option that lets apps turn off the screenshot border; 'This option is only available in Windows 11.' wcap wcap_screen_capture.h lines 336-343: ScreenCapture_CanHideRecordingBorder() returns true only for build >= 22000 ('available since Windows 11 21H2'). wcap README line 59: 'On Windows 11 you can disable yellow recording borders'. Third-party guides give different Settings paths for 24H2+. I did not find Microsoft's own page for the toggle.",
+    "sources": [
+     "https://support.medal.tv/support/solutions/articles/48001171330-what-is-advanced-window-capture-",
+     "https://github.com/mmozeiko/wcap/blob/main/wcap_screen_capture.h",
+     "https://github.com/mmozeiko/wcap/blob/main/README.md",
+     "https://obs-versions.com/yellow-border"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "I found no documented or widely used method that removes the WGC border on Windows 10 19041-19045. The Handmade Network wcap thread does not show it is possible: its author says Windows 11 only.",
+    "evidence": "Handmade Network wcap thread (search snippet): a poster tried IsBorderRequired=false and the border still appeared, ending in an access violation. mmozeiko (Apr 29, 2024): 'border can be disabled only on Windows 11. Earlier versions won't support it... That's why I did not add this feature to wcap.' OBS issue #8159 (Windows 10 border) was closed 'not planned'. ShaderGlass #82 ('Possible fix for yellow borders on Windows 10') is open with no fix. In WindowTop discussion #377, a 19045.4894 user sees the border, and a collaborator's unsupported claim that 'the most recent Windows 10 version' supports disabling it contradicts the Learn/SDK contract data. In Microsoft Q&A 108678, a developer reports the border can be removed only for an in-application window that is DWM-cloaked, which is useless for a visible game. I found no Windhawk mod, DWM patch or private interface.",
+    "sources": [
+     "https://handmade.network/forums/t/8701-wcap",
+     "https://github.com/obsproject/obs-studio/issues/8159",
+     "https://github.com/mausimus/ShaderGlass/issues/82",
+     "https://github.com/WindowTop/WindowTop-App/discussions/377",
+     "https://learn.microsoft.com/en-us/answers/questions/108678/how-to-remove-yellow-boarder-capture-indicator-fro"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Any hack that removes the border on Windows 10 would have to change DWM itself (patching or injecting into dwm.exe, or hooking private composition interfaces). That needs admin/SYSTEM, breaks with Windows updates, looks like malware to AV and anti-cheat, and violates the project's no-admin/no-injection rules.",
+    "evidence": "Microsoft says the border is drawn by the system (DWM), not by the capturing process (screen-capture.md line 16). On 19045 the only per-session control interface (IGraphicsCaptureSession3) is absent (E_NOINTERFACE). By elimination, only the compositor could be altered. I found no public implementation.",
+    "sources": [
+     "https://github.com/MicrosoftDocs/windows-dev-docs (hub/apps/develop/media-authoring-processing/screen-capture.md)",
+     "https://github.com/openai/codex/issues/25178"
+    ],
+    "confidence": "inferred"
+   },
+   {
+    "claim": "Medal's 2026 recorder defaults: game capture preferred, WGC ('Advanced Window Capture') off, Force Window Capture off, Experimental Capture off, encoded buffer in RAM, GPU encoder, 1280x720 at 60 fps target, 15 Mbps, VFR, Windows Game Mode disabled.",
+    "evidence": "medal-cross-platform research/evidence/settings_catalog.json defaults: TargetFPS 60 (l.139), Bitrate 15, Resolution 1280x720, FpsMode 'VFR' (l.145), Encoder 'GPU' (l.185), Codec H264, AdvancedWindowCapture false (l.198), ExperimentalCapture false (l.199), ForceWindowCapture false (l.201), InMemoryBuffer true (l.202), WindowsGameModeDisabled true (l.203), PreferGameCapture true (l.210). This is static analysis of Medal client 2637.461.1 / recorder v2638.2751.1 (FINDINGS.md l.5).",
+    "sources": [
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/settings_catalog.json",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/FINDINGS.md"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Medal's default path for many games is an injected, OBS-derived graphics hook that hands frames over as a shared D3D texture. Injection does not use WGC, so it shows no border.",
+    "evidence": "2023 Medal logs (Windows 10 19045): MedalLog20230803.txt l.136 'Set security permissions for ...recorder-3.696.0\\Host\\medal-hook64.dll'; l.927-928 '[ESM State]: OBSInjectionState' / 'Injecting into process 12344'; graphics offsets dump ([d3d8]/[d3d9]/[dxgi] present=...); l.977 'IncreaseFrameLatency success'; l.981 '[OBSCaptureState] Shared texture success. Handle: ... Format: R8G8B8A8_UNorm'; l.1018 'GameRecordingSuccessfullyStarted InjectionCapture'. In 2026 the recorder metadata still has MedalEncoder.OBS.BaseHookInterface/HookInterface/GraphicsOffsets P/Invokes (NtOpenSection, MapViewOfFile, D3D11CreateDeviceAndSwapChain), and FINDINGS.md l.49 says 'The Host directory contains injection helpers and graphics hooks... OBS-derived components'. The OBS graphics-hook d3d11-capture.cpp creates a D3D11_RESOURCE_MISC_SHARED texture and CopyResource()s the backbuffer into it (lines 98-116, 247). Medal's support article on antivirus whitelisting says 'Medal injects into your games', but its marketing FAQ claims 'Medal does not inject into games'. The binaries and logs contradict the marketing claim.",
+    "sources": [
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/blob/main/Medal/MedalLog20230803.txt",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/recorder_metadata.json",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/FINDINGS.md",
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/graphics-hook/d3d11-capture.cpp",
+     "https://support.medal.tv/support/solutions/articles/48001166446-how-to-whitelist-medal-in-your-anti-virus",
+     "https://medal.tv/learn/instant-replay-pc"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Medal's non-injected 'standard' window capture on Windows 10 19045 is DXGI Desktop Duplication of the monitor, cropped to the game window's rectangle. When the game loses focus it hides the crop and shows an 'inactiveGame.png' placeholder. Desktop Duplication has no border, which is why Medal shows none on Windows 10 even without injection.",
+    "evidence": "MedalLog20230805.txt: l.443 'Environment.OSVersion.Version - 10.0.19045.0'; l.466 'Capture area is 0,24,1920,1040'; l.473 'Memory buffer size (MB): 180'; l.481 'First video data from screen capture'; l.489 '[ESM State]: WindowCaptureStandard'; l.530 'Capture mode: DXGI'; l.541 on GameWindowDefocus 'Hiding: 0,24,1920,1040' + 'Creating overlay frame from: ...Assets\\inactiveGame.png'. MedalLog20230806.txt l.6257 WindowCaptureStandard -> l.6312 'Capture mode: DXGI' -> l.6398 '[SDK] MCaptureSCR::RunThreadDXGI - last error hr=80070005 line=894 block=if (!m_cpDXGIOutputDuplication)'. Microsoft's DuplicateOutput doc gives E_ACCESSDENIED when the app lacks access to the current desktop (e.g., the secure desktop), which matches. Across the logs: 701 'Hiding', 318 'Showing', 98 inactiveGame.png overlays.",
+    "sources": [
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/blob/main/Medal/MedalLog20230805.txt",
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/blob/main/Medal/MedalLog20230806.txt",
+     "https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/dxgi1_2/nf-dxgi1_2-idxgioutput1-duplicateoutput.md"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "In 2023 the standard capture probably came from a licensed SDK, consistent with Medialooks MFormats' 'DXGI/DX11 ScreenCapture' engine, which crops desktop duplication to a window. By 2026 Medal has its own native engine (scope.dll).",
+    "evidence": "Log strings 'MCaptureSCR', 'eMFCC_NV12', 'eMST_LetterBox', 'a264hw'. eMFCC_NV12 is a Medialooks MFormats enum, and Medialooks documents a 'DXGI/DX11 ScreenCapture' engine with capture.mode / capture.current_mode properties and an MFDeviceSCR registry path. The 2026 recorder's assembly references (recorder_metadata.json) list ScopeSharp, SharpDX.DXGI/Direct3D11 and NvAPIWrapper, with no MFormats interop.",
+    "sources": [
+     "https://api.medialooks.com/MFORMATSLib~MFORMATSLib.eMFCC.html",
+     "https://support.medialooks.com/hc/en-us/articles/360000225111-Screen-Capture-engine",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/recorder_metadata.json"
+    ],
+    "confidence": "inferred"
+   },
+   {
+    "claim": "Medal's 'Advanced Window Capture' is Windows.Graphics.Capture. It is the Medal mode that produces the yellow border, it is off by default, and it does not work in exclusive fullscreen.",
+    "evidence": "MedalLog20230805.txt l.278-281: 'Executing Request: set.windowsGraphicsCapture {\"enabled\": 0}' -> 'Saving Advanced Window Capture 0'. Medal support: the yellow box 'is a Windows security feature indicating that your game window is being recorded by Medal only when Advanced Window Capture is in use'. AWC lets you record while the window is minimized, prevents 'Game out of Focus', and 'will not work if your game is in exclusive fullscreen mode'. Border removal is Windows 11 only.",
+    "sources": [
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/blob/main/Medal/MedalLog20230805.txt",
+     "https://support.medal.tv/support/solutions/articles/48001171330-what-is-advanced-window-capture-"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Medal picks the capture method per game, and anti-cheat-protected titles get the non-injected path. The exact per-game fields in MedalGameInfo.db were not found.",
+    "evidence": "2023 logs: Roblox Win32 ('Process name found RobloxPlayerBeta | ... class | WINDOWSCLIENT', 118 detections) always went 'WindowCaptureStandard' (83 times, 'Active game GameRecordingSuccessfullyStarted WindowCapture' 81 times). The same PC's Roblox UWP ('Game Found Type UWP', ApplicationFrameHost) went 'OBSInjectionState' -> 'GameCapture' (3 times). The game DB is downloaded as cdn.medal.tv/asset/games-db/production/MedalGameInfo-2.58x.db, but the download was blocked here, so its schema is not found. That Hyperion is the reason Roblox Win32 is not hooked is my inference. Medal's black-clip article says AWC 'is especially helpful for games like Rust, FiveM, and CS2' and lists Faceit Anti-Cheat among conflicting software. Exact 2026 defaults for Valorant/Fortnite/FACEIT: not found.",
+    "sources": [
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/tree/main/Medal",
+     "https://support.medal.tv/support/solutions/articles/48000922110-black-clips-stuck-in-1-frame"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "'Force Window Capture' forces a window-based (non-hook) method and works only in windowed or borderless. 'Experimental Capture' is offered as the next fallback when AWC fails. Its implementation was not found.",
+    "evidence": "Medal black-clips article: Force Window Capture 'works only for Windowed or Borderless games (not Exclusive Fullscreen)'. With AWC it may cause exclusive-fullscreen problems, 'add a yellow border around your game', and hide the cursor. AWC article (snippet): if AWC does not fix the problem, try 'Experimental Capture' in Advanced Recording settings. The settings catalog has ExperimentalCapture=false by default. Its mechanism is not documented anywhere I could reach.",
+    "sources": [
+     "https://support.medal.tv/support/solutions/articles/48000922110-black-clips-stuck-in-1-frame",
+     "https://support.medal.tv/support/solutions/articles/48001171330-what-is-advanced-window-capture-",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/settings_catalog.json"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Medal's 2026 native engine exposes window, screen, shared-texture and device capture targets, plus window-mode and screen-mode support queries and a 'trimmed window rect' helper. The mode names, and whether any of them is a DwmGetDxSharedSurface or BitBlt/PrintWindow path, were not found.",
+    "evidence": "ScopeSharp.dll P/Invokes into scope.dll (scopesharp_metadata.json lines 783-923): scope_vcap_window_mode_support, scope_vcap_screen_mode_support, scope_vcap_create_window_target, scope_vcap_create_screen_target, scope_vcap_create_texture_target, scope_vcap_create_device_target, scope_vcap_update_target_texture, scope_vcap_get_trimmed_window_rect, scope_vcap_last_frame_received_time. Also scope_io_vid_memory_buffer_create, scope_io_buffer_export_from_timestamp, scope_venc_create_gpu. FINDINGS.md l.47: scope.dll imports D3D11/DXGI/D3D9/D2D/DWM/AVRT and FFmpeg. MedalEncoder.exe declares no DwmGetDxSharedSurface, PrintWindow or BitBlt P/Invoke; scope.dll's individual imports were not listed.",
+    "sources": [
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/scopesharp_metadata.json",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/FINDINGS.md",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/recorder_metadata.json"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Why Medal feels efficient: GPU-only frame path (hook shared texture or GPU duplicate-and-crop), hardware H.264 encoding, encoded ring buffer in RAM, modest defaults, plus OBS-style tuning: High process priority, increased DXGI max frame latency, GPU-priority attempts (non-admin, so partly failing), HAGS detection, and Windows Game Mode disabled.",
+    "evidence": "MedalLog20230805.txt: l.138 'Video codec set: a264hw - hardware encoding'; l.152 'Set process priority to High'; l.240 'Disabling windows game mode to improve performance..' / 'Windows game mode disabled.'; l.376 'GPU Scheduling registry exists'; l.473 'Memory buffer size (MB): 180'; initial settings 'FPS 30 - Resolution 1280x720 - Bitrate 10 - Quality Preset Performance - IncreaseMaxFrameLatencySetting True - In Memory Buffer True'. MedalLog20230803.txt l.977-979: 'IncreaseFrameLatency success', 'Failed to enable base priority privilege!', 'SetGPUPriority result: 6'. 2026 recorder P/Invokes: MedalEncoder.GPUSchedulingUtility+HAGSStatus (D3DKMTQueryAdapterInfo), D3DKMTGetMultiPlaneOverlayCaps, Microsoft.Samples.Utils.TokenAdjuster (AdjustTokenPrivileges), PerfAnalyzer.dll; RPC windowsGameMode; default WindowsGameModeDisabled=true. OBS equivalents: d3d11-subsystem.cpp increase_maximum_frame_latency() -> SetMaximumFrameLatency(16) 'prevent stalls sometimes seen in Present calls'; set_priority() uses D3DKMTSetProcessSchedulingPriorityClass(REALTIME, or HIGH when HAGS is on) plus SetGPUThreadPriority, logged as 'failed (not admin?)'. Sunshine display_base.cpp: 'Failed to adjust GPU priority. Please run application as administrator', and NVIDIA 'realtime' with HAGS can freeze the encoder.",
+    "sources": [
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/blob/main/Medal/MedalLog20230805.txt",
+     "https://github.com/lokritshok/FinalAssignmentVisualStudio/blob/main/Medal/MedalLog20230803.txt",
+     "https://github.com/RyanTheTechMan/medal-cross-platform/blob/main/research/evidence/recorder_metadata.json",
+     "https://github.com/obsproject/obs-studio/blob/master/libobs-d3d11/d3d11-subsystem.cpp",
+     "https://github.com/LizardByte/Sunshine/blob/master/src/platform/windows/display_base.cpp"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "DXGI Desktop Duplication is a documented, no-admin, no-injection, no-border API. It has known edge cases to handle: E_ACCESSDENIED on the secure desktop, ACCESS_LOST on desktop switch, mode change or fullscreen transition, a limit of 4 duplicating processes per session, failure on hybrid-GPU laptops when the device is on the wrong adapter, and capturing whatever covers the game.",
+    "evidence": "MicrosoftDocs/sdk-api DuplicateOutput: E_ACCESSDENIED 'only an application that runs at LOCAL_SYSTEM can access the secure desktop'; DXGI_ERROR_UNSUPPORTED for 8bpp/non-DWM; DXGI_ERROR_NOT_CURRENTLY_AVAILABLE at 'the maximum number of concurrent duplication applications (default of four)'. AcquireNextFrame: DXGI_ERROR_ACCESS_LOST on 'Desktop switch, Mode change, Switch from DWM on, DWM off, or other full-screen application'. desktop-dup-api.md: dirty/move rects and pointer handling. KB 3019314: DuplicateOutput returns 0x887a0004 when run on the discrete GPU of a hybrid system; the workaround is to use the integrated GPU.",
+    "sources": [
+     "https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/dxgi1_2/nf-dxgi1_2-idxgioutput1-duplicateoutput.md",
+     "https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/dxgi1_2/nf-dxgi1_2-idxgioutputduplication-acquirenextframe.md",
+     "https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/direct3ddxgi/desktop-dup-api.md",
+     "https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/error-when-dda-capable-app-is-against-gpu"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Mature low-latency capture tools default to DXGI duplication on Windows. OBS Display Capture's 'Automatic' mode picks DXGI unless the monitor isn't on a DXGI adapter or the machine is a battery-powered multi-GPU laptop. Sunshine tries 'ddx' before 'wgc'. Magpie also uses Desktop Duplication cropped to the window.",
+    "evidence": "OBS plugins/win-capture/duplicator-monitor-capture.c lines 250-278 choose_method(): AUTO -> METHOD_DXGI; METHOD_WGC if gs_duplicator_get_monitor_index()==-1, or if on battery with adapter count >= 2. Locale: 'Legacy (DXGI)' / 'Modern (WGC)'. Sunshine display_base.cpp ~l.1019-1035: config capture 'ddx' or empty -> display_ddup_vram_t first, then 'wgc'. Magpie DesktopDuplicationFrameSource.cpp uses DuplicateOutput plus dirty rects that overlap the source client area, and WDA_EXCLUDEFROMCAPTURE for its own window.",
+    "sources": [
+     "https://github.com/obsproject/obs-studio/blob/master/plugins/win-capture/duplicator-monitor-capture.c",
+     "https://github.com/LizardByte/Sunshine/blob/master/src/platform/windows/display_base.cpp",
+     "https://github.com/Blinue/Magpie/blob/main/src/Magpie.Core/DesktopDuplicationFrameSource.cpp"
+    ],
+    "confidence": "primary"
+   },
+   {
+    "claim": "Other non-injection, no-border options exist but are weaker. DwmGetDxSharedSurface is an undocumented user32 export that fails for windows without a redirection surface and for DirectComposition/UWP. GDI BitBlt/PrintWindow cannot capture many hardware-accelerated windows. NVIDIA NvFBC is deprecated on Windows 10 and restricted on GeForce.",
+    "evidence": "Magpie DwmSharedSurfaceFrameSource.cpp loads 'DwmGetDxSharedSurface' from user32.dll via GetProcAddress, then OpenSharedResource + CopySubresourceRegion. A code comment notes it fails when the window has no redirection surface. The Magpie wiki marks DwmSharedSurface and GDI as not supporting DirectComposition (UWP). better-genshin-impact offers BitBlt, DwmGetDxSharedSurface and WGC modes. OBS PR #2208 offers BitBlt as the legacy method. A Microsoft Q&A poster notes DXGI OutputDuplication and GDI BitBlt show no yellow border. NVIDIA Capture SDK: 'NVFBC has been deprecated on Windows 10 and above', and NvFBC on GeForce is limited to licensed or NVIDIA software.",
+    "sources": [
+     "https://github.com/Blinue/Magpie/blob/main/src/Magpie.Core/DwmSharedSurfaceFrameSource.cpp",
+     "https://github.com/Blinue/Magpie/wiki/Comparison-of-capture-methods",
+     "https://github.com/babalae/better-genshin-impact/blob/main/Fischless.GameCapture/CaptureModes.cs",
+     "https://github.com/obsproject/obs-studio/pull/2208",
+     "https://learn.microsoft.com/en-us/answers/questions/108678/how-to-remove-yellow-boarder-capture-indicator-fro",
+     "https://developer.nvidia.com/capture-sdk",
+     "https://forums.developer.nvidia.com/t/nvfbc-on-geforce/54460"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "Hook injection is accepted by anti-cheats only for specific exempted, signed hooks such as OBS's certificate. A private, unsigned DuoClip hook would not be exempt, so it means black capture at best and kick or ban risk at worst. CS2 Trusted Mode explicitly blocks unsigned third-party injection.",
+    "evidence": "OBS KB 'Capture Hook Certificate Update': switching the hook-signing certificate 'may require updates to anti-cheat solutions that specifically exempt the current certificate'. Riot Vanguard was listed as pending, and in July 2026 OBS game capture went black in Valorant until Riot updated Vanguard. Per the OBS forum (snippet), a moderator refused to sign a modified hook, saying modified hooks need their own signing and anti-cheat whitelisting. Valve's July 2020 CS:GO notes (as reported): in Trusted mode 'third party software will be blocked from interacting with CS:GO', DLLs 'must be digitally signed', and the bypass launch option may affect Trust Factor. In OBS's code, Display/Window capture are the recommended alternatives. Medal recommends AWC (a non-hook path) for CS2, Rust and FiveM.",
+    "sources": [
+     "https://obsproject.com/kb/capture-hook-certificate-update",
+     "https://obsproject.com/forum/threads/can-i-get-a-signed-build-of-graphics-hook32-dll.74181",
+     "https://techraptor.net/gaming/news/csgos-implements-new-anti-cheat-measures",
+     "https://obsproject.com/forum/threads/about-cs-go-trusted-mode.128216/",
+     "https://support.medal.tv/support/solutions/articles/48000922110-black-clips-stuck-in-1-frame"
+    ],
+    "confidence": "secondary"
+   },
+   {
+    "claim": "DuoClip can keep its own overlay or notification windows out of a Desktop Duplication crop on Windows 10 2004+ with SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE).",
+    "evidence": "MicrosoftDocs/sdk-api setwindowdisplayaffinity.md lines 105-133: WDA_EXCLUDEFROMCAPTURE 'Introduced in Windows 10 Version 2004'. On earlier versions it behaves as WDA_MONITOR. It applies to top-level windows of the current process. Magpie DesktopDuplicationFrameSource.cpp line 41 uses it for its own window.",
+    "sources": [
+     "https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/winuser/nf-winuser-setwindowdisplayaffinity.md",
+     "https://github.com/Blinue/Magpie/blob/main/src/Magpie.Core/DesktopDuplicationFrameSource.cpp"
+    ],
+    "confidence": "primary"
+   }
+  ],
+  "design_recommendations": [
+   "Detect the OS at runtime. On every Windows 10 client (build < 20348, including 19045), never use WGC as the default game capture. Use DXGI Desktop Duplication (IDXGIOutput1::DuplicateOutput, or DuplicateOutput1 on 1803+) of the monitor showing the game, and crop on the GPU (CopySubresourceRegion) to the game's client rect (GetClientRect+ClientToScreen, or DWMWA_EXTENDED_FRAME_BOUNDS). Hand the cropped texture straight to the NV12 converter and NVENC/AMF/QSV, with no CPU readback. This is Medal's 'WindowCaptureStandard' on 19045 and OBS's default Display Capture method.",
+   "Copy Medal's focus and occlusion handling: track the game HWND with SetWinEventHook (foreground, location, destroy, reorder) as Medal does. When the game is not foreground, or is covered or minimized, write a placeholder frame (Medal: inactiveGame.png) instead of recording whatever window is on top of the game's area. This prevents leaking Discord, browser or desktop content into clips shared with friends.",
+   "On Windows 11 (build >= 22000), WGC window capture is allowed. Guard with ApiInformation.IsPropertyPresent('Windows.Graphics.Capture.GraphicsCaptureSession','IsBorderRequired'), call GraphicsCaptureAccess.RequestAccessAsync(Borderless), then set IsBorderRequired(false), as OBS does. Never call IsBorderRequired without the guard: on 19045 it throws E_NOINTERFACE. Keep Desktop Duplication as the fallback, and also use it if the user denies border removal.",
+   "Do not inject a hook into game processes. The anti-cheat exemptions that make Medal and OBS hooks work are tied to their signing certificates and vendor agreements, and a private DuoClip DLL has neither. CS2 Trusted Mode, Vanguard, EAC, BattlEye, FACEIT and Roblox Hyperion all block or flag unknown injected modules.",
+   "Handle Desktop Duplication edge cases explicitly. Recreate the duplication on DXGI_ERROR_ACCESS_LOST (mode change, fullscreen transition, desktop switch). Pause with a placeholder on E_ACCESSDENIED (UAC prompt, lock screen). Create the D3D device on the adapter that owns the game's output; on hybrid laptops that is often the iGPU, so plan a cross-adapter copy to the encoder GPU or encode on that adapter. Report clearly when DXGI_ERROR_NOT_CURRENTLY_AVAILABLE hits the 4-process limit. Handle the game moving to another monitor.",
+   "Use dirty rects (GetFrameDirtyRects/GetFrameMoveRects) that intersect the game rect to skip unchanged frames, or duplicate the previous frame for a constant-frame-rate encode. Keep the encoded GOP-aligned packet ring in RAM, as Medal does (InMemoryBuffer; about 180 MB for 120 s at 10 Mbps).",
+   "Get the low-overhead behaviour without admin or system changes. Call SetMaximumFrameLatency on your own D3D device. Use MMCSS (AvSetMmThreadCharacteristics) for capture, encode and audio threads, and give the recorder process above-normal or high priority. Use moderate defaults (for example 1080p60 or 720p60, 10-20 Mbps, hardware encoder low-latency preset). Skip D3DKMT REALTIME GPU priority, because it needs admin and NVIDIA plus HAGS have known freezes, and do not silently disable Windows Game Mode on friends' PCs as Medal does.",
+   "Mark DuoClip's own overlay, toast or preview windows WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+) so they never appear in the duplicated crop.",
+   "Treat DwmGetDxSharedSurface (undocumented user32 export) as an optional experimental per-game backend only. It shows no border and needs no injection, but it fails for windows without a redirection surface and for DirectComposition, and may break with Windows updates. GDI BitBlt/PrintWindow is not viable for hardware-accelerated games.",
+   "Ask users to run games in borderless or windowed fullscreen for the most reliable crop. Test exclusive-fullscreen behaviour per title (CS2, Valorant, LoL, Fortnite, GTA V/FiveM, Minecraft, Roblox, R6, Apex, Rocket League, Dota 2, Rust, Warzone, PUBG, Marvel Rivals, EA FC) on 19045, with fullscreen optimizations both on and off."
+  ],
+  "open_questions": [
+   "What fields MedalGameInfo.db holds, and which 2026 titles (CS2, Valorant, Fortnite, FACEIT games) default to injection or to standard window capture. The DB download (cdn.medal.tv) was blocked: not found.",
+   "What Medal's 'Experimental Capture' mode is (WGC variant, DwmGetDxSharedSurface, or a new scope.dll path): not found.",
+   "Whether Medal's 2026 scope.dll standard window target still uses DXGI duplication with a crop. scope_vcap_window_mode_support mode names were not recoverable from the metadata.",
+   "Whether an active Desktop Duplication session pushes games out of independent flip / MPO and adds a frame of latency on Windows 10. Medal queries D3DKMTGetMultiPlaneOverlayCaps, but the reason is unknown. This needs measurement with PresentMon.",
+   "Whether any anti-cheat (Vanguard, EAC, BattlEye, FACEIT, Hyperion, Ricochet) reacts to a process running Desktop Duplication. None known, but no vendor statement was found.",
+   "Exact build and Settings path of the Windows 11 border-consent toggle across 21H2-24H2+, and whether unpackaged Win32 apps need anything beyond RequestAccessAsync. Microsoft's own page was not found.",
+   "Whether DwmGetDxSharedSurface returns live game content for modern flip-model DX11/DX12 windowed games on Windows 10. Untested."
+  ]
+ }
+]

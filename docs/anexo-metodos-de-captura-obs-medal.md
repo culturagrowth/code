@@ -159,3 +159,36 @@ Faça um teste "caixa-preta" num PC de vocês com Windows 11 e o Medal atual nas
 - **Entre os métodos que podemos usar com segurança, o melhor é a captura sem injeção:** Desktop Duplication recortado na janela do jogo (sem borda no Windows 10, o mesmo método sem injeção do Medal) e WGC no Windows 11. No Medal o WGC é só um modo opcional; o padrão do Medal é o hook injetado, sem borda amarela.
 - **Decisão (08/10/2026):** sem injeção por padrão; o hook estilo Medal fica previsto na arquitetura como modo opcional futuro, só para jogos sem anti-cheat.
 - A comprovação final vem do **nosso benchmark com PresentMon** na Fase 0.
+
+---
+
+## 5. Anti-cheat por jogo (rodada 3)
+
+Pesquisa de 08/10/2026. Os dados brutos e as fontes estão em `docs/pesquisa-bruta/2026-10-08-rodada3-captura-sem-borda-e-hook.json`.
+**Conclusão:** só o Minecraft não tem anti-cheat no cliente. Por isso o hook fica fora do MVP e a captura sem injeção precisa ser excelente.
+
+| Jogo / plataforma | Anti-cheat | O que acontece com um módulo desconhecido | Hook no DuoClip |
+|---|---|---|---|
+| CS2 | VAC + Trusted Mode | Trusted Mode bloqueia arquivos de terceiros e não tem lista de liberação; injetar → modo inseguro. **Precedente de ban:** AMD Anti-Lag+ (2023) | ❌ Nunca. Não sugerir `-allow_third_party_software`. |
+| Dota 2 | VAC | Ban VAC compartilhado entre jogos Source 2 | ❌ |
+| Valorant, League of Legends | Vanguard (kernel; LoL desde 2024) | A Riot diz que não há lista de liberação. Em jul/2026 o próprio Game Capture do OBS ficou preto até a Riot corrigir. | ❌ |
+| Fortnite | EAC + BattlEye | O BattlEye bloqueia DLLs de terceiros ("Blocked loading of file") | ❌ |
+| Apex, Rust, Rocket League (EAC desde 28/04/2026) | EAC | Pelos headers do SDK, módulo proibido = jogador removido da partida; ban é decidido à parte | ❌ |
+| Rainbow Six Siege | BattlEye | Já bloqueou até o overlay da própria Ubisoft | ❌ |
+| PUBG | BattlEye + medidas próprias | Já bloqueou ShadowPlay e ReShade (bloqueio, não ban) | ❌ |
+| GTA V Online | BattlEye (desde set/2024) | ReShade e Special K são desativados | ❌ |
+| FiveM | Próprio (Adhesive) | O código do cliente recusa DLLs de hook/overlay (Discord, ShadowPlay, Fraps...) por causarem crash | ❌ |
+| CoD / Warzone | Ricochet (kernel) | O OBS pode precisar de admin; os títulos recentes exigem TPM 2.0 e Secure Boot | ❌ |
+| Marvel Rivals | NetEase (próprio) | A NetEase chamou um overlay de estatísticas de "software de trapaça" | ❌ |
+| EA FC | EA Javelin (kernel) | Fecha o jogo diante de "software conflitante" | ❌ |
+| Roblox | Hyperion (Byfron) | Kick com erro 268 para overlays injetados; bloqueia o Game Capture do OBS | ❌ |
+| Free Fire (emulador) | Garena | Software que interage com o cliente = trapaça | ❌ Nunca injetar em emulador |
+| FACEIT (plataforma) | FACEIT AC (kernel) | Avisa ou recusa; só o OBS oficial é compatível. **A FACEIT encerra o suporte ao Windows 10 em 14/10/2026.** | ❌ |
+| Gamers Club (plataforma) | GC AC (próprio) | Pede para fechar injetores de DLL; não há lista pública | ❌ |
+| **Minecraft Java** | Nenhum no cliente | — | ✅ Único candidato (opt-in, depois de medir) |
+| Minecraft Bedrock (GDK) | Nenhum encontrado | Hook sem admin não verificado | ⚠️ A testar |
+
+Outros fatos da rodada 3:
+- O Discord **refez o overlay em mar/2025 para não injetar mais no jogo**, citando desempenho e compatibilidade. A indústria está se afastando da injeção.
+- Manter um hook dá trabalho contínuo: são cerca de 45 commits no hook do OBS desde 2022. Também gera falsos positivos de antivírus (o Medal tem artigos de liberação por antivírus) e exige assinatura de código (o Artifact Signing não aceita pessoa física no Brasil; certificado OV/EV em token de hardware).
+- **Por que o Medal não tem borda no Windows 10:** o padrão dele é hook ou "WindowCaptureStandard" (Desktop Duplication recortado). Só o "Advanced Window Capture" (WGC) mostra borda. Configurações padrão de 2026: `PreferGameCapture=true`, AWC, Force e Experimental desligados, buffer na RAM, encoder de GPU, 720p60, 15 Mbps, VFR, e o Modo de Jogo do Windows desligado.

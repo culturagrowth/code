@@ -44,6 +44,8 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 | 11 | "Pode ser o plano: **sem injeção por padrão** e o **hook como modo opcional** — deixa programado mas implementa mais pra frente" | **Decisão final de captura** (4.1) |
 | 12 | "Pode seguir; use **agentes mais eficientes para código fácil** e **agentes mais avançados para partes difíceis**" | Implementação começou: sonnet para as partes fáceis, opus para as difíceis, cada parte com revisão adversarial |
 | 13 | "Armazene em um arquivo de memória tudo que for importante" | Este arquivo + `CLAUDE.md` na raiz |
+| 14 | "Pode atualizar tudo da memória de novo, agora que acabou de aplicar" | Memória, documentos e anexo atualizados com a Fase B1 parcial e a pesquisa da rodada 3. Pesquisas brutas e scripts dos agentes guardados no repositório. |
+| 15 | "Crie também um prompt para eu mandar para o meu Claude Code no CLI para puxar tudo e realizar o teste do app" | [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](PROMPT-CLAUDE-CODE-LOCAL.md) |
 
 ## 3. Preferências do usuário
 
@@ -65,8 +67,25 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
     - roda na GPU dona do monitor.
   - **Windows 11:** WGC sem borda (`RequestAccessAsync(Borderless)` + `IsBorderRequired(false)`), se o teste de empacotamento
     confirmar que funciona sem MSIX; senão, o mesmo Desktop Duplication recortado.
-  - **Em avaliação:** *DWM shared surface* (`DwmGetDxSharedSurface`, API não documentada usada pelo Magpie), também sem borda.
-- **Opcional e futuro (Fase 6): hook injetado no estilo Medal.** Desligado por padrão e ligado jogo a jogo, **só em jogos sem anti-cheat**
+  - **Confirmado pela rodada 3:** no Windows 10 **não há como tirar a borda do WGC**. No 19045, `IsBorderRequired` dá `E_NOINTERFACE`, então sempre é preciso detectar a API antes.
+    O Medal não tem borda porque usa hook ou Desktop Duplication recortado. *DWM shared surface* (`DwmGetDxSharedSurface`) fica só como backend experimental.
+  - **Práticas de desempenho copiadas do Medal:**
+    - imagem só na GPU;
+    - encoder de hardware;
+    - buffer na RAM;
+    - processo em prioridade alta, `SetMaximumFrameLatency` e MMCSS;
+    - *dirty rects*;
+    - `WDA_EXCLUDEFROMCAPTURE` nas nossas janelas.
+
+    **Não copiar:** a prioridade de GPU *realtime* (exige admin) nem o desligamento do Modo de Jogo do Windows.
+- **Opcional e futuro (Fase 6), FORA DO MVP pela pesquisa da rodada 3: hook injetado no estilo Medal.** Dos jogos populares no Brasil, só o **Minecraft Java** não tem anti-cheat no cliente.
+  Regras extras:
+  - lista de bloqueio fixa (CS2, Valorant, LoL, Fortnite, Roblox etc.);
+  - o hook se desliga sozinho se um anti-cheat de kernel estiver rodando;
+  - nunca hooks globais nem *layer* Vulkan implícita;
+  - *kill switch* remoto.
+
+  Detalhes: Desligado por padrão e ligado jogo a jogo, **só em jogos sem anti-cheat**
   (Minecraft, single-player...). Bloqueado em Vanguard, EAC, BattlEye, VAC/CS2, FACEIT, Gamers Club, Ricochet e Hyperion. Componente
   separado e assinado (`duoclip-hook`). Volta sozinho para a captura sem injeção se falhar. Se for derivado do OBS (GPL-2), vai como
   componente separado com o código-fonte disponível, como o Medal faz.
@@ -205,6 +224,16 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
   - S3 sa-east-1: US$ 0,0405/GB e US$ 0,15/GB de saída;
   - GCS São Paulo: US$ 0,035 e US$ 0,12, com soft delete de 7 dias ligado por padrão;
   - Supabase Pro: US$ 25, com 250 GB de saída e US$ 0,09/GB depois; sem expiração de objetos.
+- **Rodada 3 (08/10/2026), captura sem borda e hook:**
+  - Borda do WGC no Win10: impossível de forma documentada (contrato v12, build 20348+). No 19045 dá `E_NOINTERFACE`, e a configuração do Windows para isso só existe no Windows 11.
+  - Medal sem borda no Win10: hook (OBS) ou "WindowCaptureStandard" = Desktop Duplication recortado com `inactiveGame.png`.
+    Padrões de 2026: `PreferGameCapture=true`, 720p60, 15 Mbps, VFR, buffer na RAM, Modo de Jogo desligado.
+  - **Anti-cheat por jogo:** tabela no anexo, seção 5. Só o Minecraft não tem. VAC já baniu por hook inofensivo (AMD Anti-Lag+, 2023).
+    O Rocket League tem EAC desde 28/04/2026. **A FACEIT encerra o suporte ao Windows 10 em 14/10/2026.**
+  - O Discord refez o overlay em mar/2025 para não injetar mais nos jogos.
+  - Ainda não pesquisado (as partes caíram no limite de sessão): os efeitos do Desktop Duplication no *independent flip*/MPO e a validação do *DWM shared surface*.
+    Isso pode ser medido direto no Windows com PresentMon.
+- **Pesquisas brutas** (JSON com todas as fontes): [`docs/pesquisa-bruta/`](pesquisa-bruta/).
 
 ## 6. Estado da implementação (em 08/10/2026)
 
@@ -231,41 +260,56 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
     Destaques: o cliente precisa enviar o PUT com o `content_length` exato e `manifest_size`; `AppClock::freeze()` devolve a linha-alvo;
     configurar só as faixas de áudio ativas no buffer.
 
-### Em andamento / pendente desta sessão
+- **Fase B1 PARCIAL (08/10/2026).** O workflow bateu no **limite de sessão** dos agentes. Situação:
+  - `crates/duoclip-gamesdb` (sonnet): ✅ **implementado** (30 jogos, validação, `choose_backend`; 51 testes), mas **sem a revisão adversarial**.
+    Os dados de anti-cheat batem com a pesquisa da rodada 3 (todos com `verified: false`).
+  - `crates/duoclip-mux` (opus): 🟡 **implementação parcial, sem revisão.** Há código para Annex B, boxes, MP4 fragmentado, MP4 progressivo e timing,
+    com testes estruturais e com ffmpeg passando (estes pulam se o ffmpeg não estiver instalado). O agente não terminou o relatório.
+  - `crates/duoclip-audio` (opus): 🟡 **implementação parcial, sem revisão.** A parte portável (raízes do Discord, timestamps) tem testes.
+    O módulo `wasapi/` (ativação, captura) só foi compilado e nunca executado. Falta conferir se mic, loopback do dispositivo e retry estão completos.
+  - `crates/duoclip-encode` (opus): ❌ **não começou** (só esqueleto + SPEC).
+  - Estado do workspace em 08/10 13h UTC: compila em Linux e Windows (gnu), e **362 testes passam**.
+- Pesquisas brutas e relatórios dos agentes: [`docs/pesquisa-bruta/`](pesquisa-bruta/).
+  Scripts dos workflows, para refazer ou continuar: [`tools/agent-workflows/`](../tools/agent-workflows/).
 
-- **Fase B1** (workflow de agentes): a Fase B foi dividida em B1 e B2.
-  - B1 implementa os crates com esqueleto e SPEC já no GitHub:
-    - `duoclip-gamesdb` (sonnet): banco de jogos + política de escolha do método de captura;
-    - `duoclip-mux` (opus): MP4 fragmentado crash-safe + MP4 progressivo, testado com o ffmpeg do sistema;
-    - `duoclip-audio` (opus): WASAPI process loopback do jogo e do Discord + mic;
-    - `duoclip-encode` (opus): conversão de cor na GPU + encoders H.264/AAC via Media Foundation.
-  - **O código Windows de B1 só foi compilado** (`--target x86_64-pc-windows-gnu`). Ele precisa ser **executado e testado num Windows real**.
-  - Se os crates estiverem só com stub no GitHub, a B1 não terminou: implemente seguindo os SPECs.
-- **Fase B2** (depois da pesquisa de captura): `duoclip-capture` com os backends `dda_crop` e `wgc` (e o stub do hook), seguindo as seções 4.6–4.10 do documento de pesquisa.
-- A primeira rodada da pesquisa de captura morreu quando uma mensagem do usuário interrompeu a sessão. **Ela foi relançada.**
+### Em andamento / pendente
 
-- **Pesquisa de captura sem borda no Windows 10** (workflow de pesquisa): compara Desktop Duplication recortado × DWM shared surface × hook,
-  com uma tabela de anti-cheat por jogo. Se o resultado não estiver no documento de pesquisa, refaça essa pesquisa antes da Fase B.
+1. **Terminar a B1:**
+   - revisar o gamesdb;
+   - terminar e revisar mux e áudio;
+   - implementar e revisar o encode.
+
+   Basta rodar de novo `tools/agent-workflows/duoclip-phase-b1-implement.js`. Os agentes encontram o código parcial e continuam.
+2. **Fase B2:** `duoclip-capture` com os backends `dda_crop` (padrão no Win10) e `wgc` (Win11, com detecção da API e sem borda), o stub do hook,
+   as práticas de desempenho da seção 4.6 do documento de pesquisa e o tratamento de foco/oclusão no estilo Medal.
+3. **Teste em Windows real:** o prompt para o Claude Code local está em [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](PROMPT-CLAUDE-CODE-LOCAL.md).
 
 ### Próximos passos (roadmap)
 
 | Fase | O que fazer |
 |---|---|
-| **A** ✅ concluída | proto, crypto, worker, clock e buffer implementados, revisados e testados (244 testes Rust + 312 do Worker). |
-| **B** (precisa de Windows para testar) | `duoclip-capture` (trait `CaptureBackend`, backend **dda_crop** e backend **wgc**; hook só como stub), `duoclip-audio` (WASAPI process loopback: jogo + Discord + mic), `duoclip-encode` (FFmpeg/NVENC/AMF/QSV com textura D3D11), escritor de **bucket local fMP4**, teste da borda no Win11 e **benchmark PresentMon comparando com o Medal** |
+| **A** ✅ concluída | proto, crypto, worker, clock e buffer implementados, revisados e testados |
+| **B1** 🟡 parcial | gamesdb ✅ (falta a revisão) · mux 🟡 · áudio 🟡 · encode ❌ |
+| **B2** | `duoclip-capture` (dda_crop + wgc + stub do hook), bucket local fMP4 integrado, **benchmark PresentMon comparando com o Medal** e teste da borda no Win11 |
 | **C** | Rede: WebRTC + Worker (signaling) + upload e download cifrados no R2. Integração com o relógio global e o protocolo. |
 | **D** | App **Tauri 2**: bandeja, tecla de clipe, amigos e crews, indicador "±X ms", editor com POVs sincronizados e exportação |
-| **E** | Banco de jogos, testes com anti-cheats (Vanguard, EAC, BattlEye, FACEIT, Gamers Club), instalador e atualização |
-| **F (futuro)** | Modo **hook opcional** (`duoclip-hook`), só em jogos sem anti-cheat |
+| **E** | Banco de jogos remoto, testes com anti-cheats (Vanguard, EAC, BattlEye, FACEIT, Gamers Club), instalador e atualização |
+| **F (futuro, fora do MVP)** | Modo **hook opcional** (`duoclip-hook`), só para o Minecraft Java no começo, depois de medir |
+
+> **Ainda não existe um app executável.** Por enquanto há bibliotecas testadas e o Worker. O primeiro executável de teste no Windows serão as
+> ferramentas de diagnóstico (smoke tests) de áudio, encoder e captura, criadas pelo prompt do Claude Code local.
 
 ### Validações pendentes (para fazer em máquinas Windows reais)
 
-1. Benchmark PresentMon: Desktop Duplication recortado × WGC × Medal ligado (CS2, Valorant, Fortnite, LoL, Minecraft, Roblox).
-2. Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso.
-3. Process loopback do Discord pelo processo raiz, no Windows 10 19045 e no Windows 11.
-4. "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame).
-5. Opcional: teste "caixa-preta" do Medal 2026 (`tasklist /m medal-hook64.dll` e os logs em `%AppData%\Medal`) para confirmar o padrão atual.
-6. Política de uso do NTP.br/NIC.br para embutir num app, se um dia o app for público.
+1. Compilação nativa com MSVC (até agora só houve checagem cruzada com o alvo gnu).
+2. Process loopback do jogo e do Discord pelo processo raiz, no Windows 10 19045 e no Windows 11 (falhas intermitentes conhecidas no 19045).
+3. Encoders de hardware Media Foundation disponíveis em cada GPU dos amigos (NVIDIA, AMD, Intel).
+4. Benchmark PresentMon: Desktop Duplication recortado × WGC × Medal ligado (CS2, Valorant, Fortnite, LoL, Minecraft, Roblox).
+   Medir também se o Desktop Duplication tira o jogo do *independent flip*.
+5. Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso.
+6. "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame).
+7. Worker contra o R2 de verdade (criar bucket, token S3, D1 e fazer o deploy; ver `worker/README.md`).
+8. Opcional: teste "caixa-preta" do Medal 2026 (`tasklist /m medal-hook64.dll` e os logs em `%AppData%\Medal`).
 
 ## 7. Como retomar em outro ambiente
 
@@ -286,3 +330,5 @@ cd worker && npm install && npm run typecheck && npm test
 - As Fases B a E precisam de **Windows** para rodar e testar (captura, áudio e encoder). Instale Visual Studio Build Tools, Rust (MSVC),
   FFmpeg (build LGPL com NVENC, AMF e QSV), PresentMon e Node 22.
 - Num ambiente com Claude Code, o arquivo `CLAUDE.md` na raiz é carregado automaticamente e aponta para este arquivo.
+- Para baixar tudo e testar no seu PC com o Claude Code no terminal, use o prompt pronto em [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](PROMPT-CLAUDE-CODE-LOCAL.md).
+- O FFmpeg (com libx264 e aac) é usado nos testes do mux. Sem ele, esses testes são pulados. No Windows: `winget install Gyan.FFmpeg`.

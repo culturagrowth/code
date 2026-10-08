@@ -1,0 +1,40 @@
+[
+ {
+  "task": "gamesdb",
+  "model": "sonnet",
+  "impl": {
+   "component": "duoclip-gamesdb",
+   "status": "ok",
+   "summary": "duoclip-gamesdb is implemented per SPEC.md. It has the games.json database (30 games, embedded with include_str!), strict validation with a typed DbError, from_json with a 1 MiB cap, merged, lookup, and choose_backend. choose_backend returns a Portuguese reason_pt and never puts the hook in fallbacks. The code is pure Rust with forbid(unsafe_code) and nothing in it panics on untrusted input. I added an \"Implementation notes\" section to SPEC.md documenting the choices the SPEC left open.",
+   "tests_passed": 51,
+   "checks": "cargo fmt -p duoclip-gamesdb --check: clean. cargo clippy -p duoclip-gamesdb --all-targets -- -D warnings: clean. cargo test -p duoclip-gamesdb: 50 unit tests + 1 doctest pass in about 0.15 s. cargo clippy -p duoclip-gamesdb --all-targets --target x86_64-pc-windows-gnu -- -D warnings: clean.",
+   "deviations_from_spec": [
+    "AntiCheat::BattlEye is written \"battleye\" in JSON (serde rename plus alias \"battl_eye\"), because plain rename_all=snake_case gives the awkward \"battl_eye\". The docs call it battleye.",
+    "AntiCheat::Other carries #[serde(other)], so an unknown anti-cheat name from a newer remote DB is read as Other (which still blocks the hook) instead of failing the whole parse.",
+    "Extra validation beyond the SPEC: name must be non-empty; exe_names must be non-empty; exe names must be bare file names (no path separators or Windows-forbidden characters, no surrounding whitespace, non-empty stem before .exe); kernel_anticheat requires a real anti-cheat, so [None] does not count.",
+    "Hook is a primary only when it was requested (user preference Hook, or no usable preference and the game's default_backend is Hook) and every rule-3 condition holds. hook_enabled_games alone does not select it, because rule 3 lists necessary conditions.",
+    "merged: the side with the higher version wins per id and base wins on a tie. A losing-side entry whose id or exe collides with an entry already kept is dropped, so two valid DBs always merge into a valid one. Result version is the max; the winner's games come first.",
+    "Extra public items: MAX_DB_BYTES, DbError, GameEntry::has_anticheat and allows_hook, OsInfo::is_windows_11, and Default on UserPrefs. notes_pt and verified may be omitted in JSON (default empty / false), and unknown JSON fields are ignored.",
+    "embedded() returns an empty DB (version 0) instead of panicking if the embedded JSON were ever invalid. A test checks that it is not.",
+    "fallbacks are limited to the game's allowed_backends, in OS-default order. An inconsistent entry with no usable backend gets the plain OS default."
+   ],
+   "known_limitations": [
+    "All anti-cheat data in games.json is best knowledge, verified=false everywhere, and several entries are marked \"(a confirmar)\": Marvel Rivals (modelled as Other, no kernel), League of Legends (Vanguard rollout per region), Phasmophobia (no anti-cheat). Exe names for EA FC (FC24/25/26), GTA V Enhanced and the FiveM build-specific executables should also be double-checked.",
+    "lookup matches exact basenames (Unicode-lowercased), with no wildcards. FiveM's game process name changes with the build (FiveM_bNNNN_GTAProcess.exe), so I listed known builds and newer ones will not be recognized until the DB is updated.",
+    "javaw.exe (Minecraft Java) is shared with other Java apps. As the SPEC says, matching it to Minecraft needs window-title hints later; this crate only flags it in notes_pt.",
+    "Minecraft Bedrock has no anti-cheat but does not list hook (protected Store/GDK process), which is allowed but conservative.",
+    "No game sets default_backend in the embedded data (all null), so the OS default applies until the research pass says otherwise."
+   ],
+   "needs_windows_testing": [],
+   "files": [
+    "/home/user/code/crates/duoclip-gamesdb/games.json",
+    "/home/user/code/crates/duoclip-gamesdb/src/lib.rs",
+    "/home/user/code/crates/duoclip-gamesdb/src/model.rs",
+    "/home/user/code/crates/duoclip-gamesdb/src/db.rs",
+    "/home/user/code/crates/duoclip-gamesdb/src/select.rs",
+    "/home/user/code/crates/duoclip-gamesdb/SPEC.md"
+   ]
+  },
+  "review": null
+ }
+]

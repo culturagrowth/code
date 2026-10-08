@@ -170,9 +170,32 @@ Não existe benchmark independente comparando os métodos em FPS. Por isso vamos
 | **Windows 10** | **Desktop Duplication recortado na janela do jogo** | **Não** | É o mesmo método sem injeção que o Medal usa na captura de janela "padrão" (os logs mostram `Capture mode: DXGI` e um retângulo de captura). |
 | **Windows 11** | WGC sem borda, se o teste de empacotamento confirmar (4.10); senão, o mesmo Desktop Duplication recortado | Não | O WGC grava só a janela, mesmo com algo por cima. |
 
-> 🔎 **Em avaliação:** a pesquisa em andamento compara o Desktop Duplication recortado com o *DWM shared surface* (API não documentada usada pelo app Magpie, também sem borda) e mede os efeitos de cada um no FPS e na latência. O método final de cada versão do Windows será confirmado com essa pesquisa e com o benchmark da Fase 0.
+> ✅ **Confirmado pela pesquisa da rodada 3 (08/10/2026):**
+> - **No Windows 10 não existe forma documentada de tirar a borda do WGC.** `IsBorderRequired` e `RequestAccessAsync(Borderless)` são do contrato v12 (build 20348+). No 19045, chamar `IsBorderRequired` dá `E_NOINTERFACE`, então **sempre** é preciso detectar a API antes (`ApiInformation.IsPropertyPresent`).
+> - A borda também aparece capturando o monitor via WGC. A configuração do Windows para desligá-la só existe no Windows 11. Remover a borda no Win10 exigiria mexer no `dwm.exe` (admin/injeção), o que está **fora de questão**.
+> - **O Medal não mostra borda no Win10 porque não usa WGC por padrão:** onde pode, injeta o hook; onde não pode (ex.: Roblox), usa a "WindowCaptureStandard", que é **Desktop Duplication recortado na janela**, com a imagem `inactiveGame.png` quando o jogo perde o foco. É exatamente o nosso padrão.
+> - OBS (Display Capture automático), Sunshine (`ddx`) e Magpie também usam Desktop Duplication por padrão.
+> - O *DWM shared surface* (`DwmGetDxSharedSurface`, não documentado) fica só como **backend experimental por jogo**: falha em janelas sem *redirection surface* e em DirectComposition, e pode quebrar com atualizações do Windows. BitBlt/PrintWindow não servem para jogos acelerados por hardware.
+> - Ainda falta medir (PresentMon) se uma sessão de Desktop Duplication tira o jogo do *independent flip*/MPO no Windows 10.
+
+**Por que o Medal "não laga" (logs e configurações reais) e o que vamos copiar:**
+
+| Medal faz | DuoClip |
+|---|---|
+| Imagem só na GPU (textura do hook ou duplicação + recorte na GPU) | ✅ Igual: recorte com `CopySubresourceRegion` direto para o conversor NV12 e o encoder |
+| Encoder de hardware (`a264hw`) | ✅ Igual (NVENC, AMF ou QSV) |
+| Buffer de pacotes na RAM (~180 MB para 120 s a 10 Mbps) | ✅ Igual (seção 6) |
+| Padrões modestos (720p60, 10–15 Mbps, VFR) | ✅ Padrão sugerido 1080p60 ou 720p60, 10–20 Mbps, preset de baixa latência |
+| Processo do gravador em prioridade alta; `SetMaximumFrameLatency`; MMCSS | ✅ Igual: prioridade *above normal/high*, `SetMaximumFrameLatency` no nosso device, MMCSS nas threads de captura, encode e áudio |
+| Tenta prioridade de GPU *realtime* (falha sem admin) | ❌ Não: exige admin e há travamentos conhecidos com NVIDIA + HAGS |
+| **Desliga o Modo de Jogo do Windows** sem avisar | ❌ Não mexer nas configurações do PC dos amigos |
+| Usa *dirty rects* para pular quadros sem mudança | ✅ `GetFrameDirtyRects`/`GetFrameMoveRects` cruzados com o retângulo do jogo, ou repetir o quadro anterior (CFR) |
 
 **Cuidados com o Desktop Duplication recortado:**
+
+- **Nossas próprias janelas** (aviso "Fulano clipou", prévia) recebem `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` (Win10 2004+) para nunca entrarem no recorte.
+- `E_ACCESSDENIED` (UAC, tela de bloqueio): pausar e gravar a tela "jogo fora de foco". `DXGI_ERROR_NOT_CURRENTLY_AVAILABLE`: o limite de **4 processos duplicando ao mesmo tempo** foi atingido; avisar o usuário.
+- O jogo pode mudar de monitor: acompanhar com `SetWinEventHook` (foreground, location, destroy, reorder) e recriar a duplicação no monitor novo.
 
 - **Ele grava o que aparecer por cima do jogo** (uma notificação, um popup do Discord). Quando o jogo perde o foco, o app grava uma tela "jogo fora de foco" no lugar, como o Medal faz. A detecção usa `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`, que funciona de fora do processo, sem injeção.
 - O app acompanha a posição e o tamanho da janela do jogo para ajustar o recorte. O recorte é feito na GPU (`CopySubresourceRegion` direto na textura de entrada do encoder).
@@ -190,11 +213,21 @@ Não existe benchmark independente comparando os métodos em FPS. Por isso vamos
 ### 4.7 Modo hook (opcional, implementação futura)
 
 - **O que é:** uma DLL no estilo do Medal e do OBS, carregada dentro do jogo, que copia cada frame direto para uma textura compartilhada. É o método mais leve, não tem borda e funciona em tela cheia exclusiva.
+- **Conclusão da pesquisa (rodada 3):** **fora do MVP.**
+  - Dos jogos populares no Brasil, **só o Minecraft** (Java; Bedrock a testar) não tem anti-cheat no cliente. Em todos os outros, e também na Gamers Club e na FACEIT, um módulo desconhecido é bloqueado, derruba da partida ou pode dar ban.
+  - VAC já baniu por hook inofensivo: o AMD Anti-Lag+ no CS2, em 2023.
+  - O próprio Medal diz que não lê nem modifica a memória do Valorant e usa APIs gráficas padrão. Ou seja, nos jogos protegidos ele também grava sem injetar.
+  - O hook só vale a pena se o benchmark no Minecraft mostrar ganho claro, por exemplo gravar mesmo com o jogo coberto ou minimizado.
+  - A tabela completa por jogo está no [anexo](anexo-metodos-de-captura-obs-medal.md#5-anti-cheat-por-jogo-rodada-3).
 - **Regras de uso:**
   - **desligado por padrão**, e o usuário liga **jogo a jogo**;
   - só pode ser ligado em jogos marcados como **"sem anti-cheat"** no banco de jogos (por exemplo Minecraft e jogos single-player);
   - **bloqueado** em jogos com Vanguard, Easy Anti-Cheat, BattlEye, VAC/CS2, FACEIT, Gamers Club, Ricochet, Hyperion (Roblox) etc.;
-  - se o hook falhar ou o jogo atualizar, o app volta sozinho para o modo sem injeção.
+  - se o hook falhar ou o jogo atualizar, o app volta sozinho para o modo sem injeção;
+  - **lista de bloqueio fixa**, que o usuário não pode mudar: CS2, Dota 2, Valorant, LoL, Fortnite, Apex, Rust, R6, PUBG, GTA V, FiveM, CoD/Warzone, Marvel Rivals, EA FC, Rocket League (EAC desde 28/04/2026), Roblox e emuladores Android (Free Fire);
+  - o hook se **desliga sozinho, até em jogos liberados,** sempre que um anti-cheat de kernel ou de plataforma estiver rodando no PC (Vanguard, FACEIT, Gamers Club, EAC, BattlEye, Javelin, Ricochet, Hyperion);
+  - **nunca** usar hooks globais nem uma *layer* Vulkan implícita sempre ativa. Se precisar de Vulkan, restringir com `enable_environment` só aos processos liberados;
+  - *kill switch* remoto no banco de jogos e telemetria de crash entre os amigos.
 - **Entrega:**
   - componente **separado** (`duoclip-hook`), assinado digitalmente. Assim o app principal não carrega nenhum código de injeção enquanto o modo estiver desligado;
   - se for derivado do *graphics-hook* do OBS, ele é GPL-2. Nesse caso, distribuir como componente separado com o código-fonte disponível, como o Medal faz. A outra opção é escrever do zero.
@@ -251,7 +284,7 @@ Campos do banco de jogos: `exe`, `nome`, `anticheat` (ex.: `vanguard`, `eac`, `b
 
 ### 4.10 Borda amarela e empacotamento
 
-- No WGC, remover a borda exige o **build 20348+**, ou seja, Windows 11. **No Windows 10 não há como tirar a borda do WGC**, e é por isso que lá o padrão é o Desktop Duplication recortado.
+- No WGC, remover a borda exige o **build 20348+**, ou seja, Windows 11. **No Windows 10 não há como tirar a borda do WGC** (confirmado: no 19045 a chamada dá `E_NOINTERFACE`), e é por isso que lá o padrão é o Desktop Duplication recortado.
 - No Windows 11 o fluxo é `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` (pede consentimento ao usuário) seguido de `IsBorderRequired(false)`. A Microsoft documenta que é preciso a capability `graphicsCaptureWithoutBorder` no **manifesto de pacote**. O OBS, que não é empacotado, chama a mesma API, mas **não está documentado** se a remoção funciona sem pacote.
 - **Protótipo de 1 dia:** testar (a) app sem pacote, (b) sem pacote com a opção do Windows 11 ligada e (c) pacote esparso/MSIX com a capability. Se nenhuma funcionar sem complicação, o Windows 11 também usa o Desktop Duplication recortado.
 

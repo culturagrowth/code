@@ -1,0 +1,521 @@
+[
+ {
+  "task": "proto+crypto",
+  "model": "sonnet",
+  "impl": {
+   "component": "duoclip-proto + duoclip-crypto",
+   "status": "ok",
+   "summary": "Both crates are implemented per their SPECs, with no new dependencies, and no Cargo.toml or Cargo.lock edits. duoclip-proto has the ids, Quality and Interval types, all 11 Message variants with strict validation, encode/decode with a 64 KiB size check and a version probe, and the object_key/manifest_key/clip_prefix helpers. Extra items beyond the SPEC: ClipRequest::with_defaults, checked_window_utc, Message::type_name, validate_object_key, Interval helpers and Quality::as_str. duoclip-crypto has ClipKey (zeroized, redacted Debug), ChunkAad, seal_chunk/open_chunk (AES-256-GCM, DCC1), Manifest with seal/open (DCM1) and well-formedness checks, sha256_hex and the Chunker. Extra items: Manifest::new/validate/chunk_aad, ManifestEntry::verify, and PlainChunk::aad/manifest_entry. Tests cover each SPEC requirement. AES-GCM known-answer vectors were computed independently with Python `cryptography` and match. Tests use seeded RNGs and finish in well under a second per crate.",
+   "tests_passed": 92,
+   "checks": "For each crate (duoclip-proto, then duoclip-crypto): `cargo fmt -p <crate>` (then `cargo fmt -p duoclip-proto -p duoclip-crypto -- --check`, clean), `cargo clippy -p <crate> --all-targets -- -D warnings` (clean), `cargo test -p <crate>` and `cargo check -p <crate> --target x86_64-pc-windows-gnu` (both OK). `cargo doc` gave no warnings. Test counts: proto 39 integration + 1 doctest; crypto 5 unit + 46 integration + 1 doctest; 92 in total, all passing.",
+   "deviations_from_spec": [
+    "ClipRequest::validate also rejects an empty window (pre+post+margins == 0), because window_utc must be a non-empty Interval. This is an extra rule beyond the SPEC list.",
+    "Message has a hand-written Debug that redacts ClipKey.key_b64 so the clip key cannot leak into logs. Serde derives are unchanged. Structs and struct variants use deny_unknown_fields, except the unit variant Bye (a serde limitation for internally tagged unit variants).",
+    "decode probes only the `v` field first, so a message from another version (even with unknown types or fields) returns UnsupportedVersion rather than Json. Json error text is truncated to 200 chars.",
+    "Chunker hold-back rule is realised as lazy closing: the open chunk is never released until the next fragment arrives, so finish() always returns the true last chunk (is_last = true). finish() returns None only for an empty stream, so no earlier chunk ever needs re-marking. The chunk boundaries are the ones the SPEC describes. 'Non-empty' means holding at least one byte, so empty-data fragments are absorbed into the open chunk.",
+    "seal_manifest does not call Manifest::validate, matching the SPEC where only open_manifest must check. Uploaders can call Manifest::validate themselves, and open_manifest always validates.",
+    "Manifest well-formedness: an incomplete manifest whose final entry already has is_last is accepted, because that is the state while the last chunk is uploading. is_last on a non-final entry is always rejected. A complete manifest must be non-empty with its final entry is_last. 'Non-decreasing' ranges means neither from nor to goes backwards, so overlaps and gaps are allowed. plain_sha256_hex format is not validated at open; ManifestEntry::verify compares it case-insensitively.",
+    "open_raw checks length before magic: a blob under 32 bytes gives TooShort, and a full-length blob with a wrong magic gives BadMagic.",
+    "At most 100_000 chunk entries per manifest (MAX_MANIFEST_CHUNKS), to bound parsing."
+   ],
+   "known_limitations": [
+    "aes-gcm's `zeroize` feature is not enabled, because it would change the shared Cargo.lock. ClipKey bytes are zeroized on drop, but the temporary AES key schedule inside Aes256Gcm is not.",
+    "ChunkRef.object_key is validated structurally only (prefix, length, charset, no '..' or '//'). ChunkRef carries no crew id, so the receiver must compare it against duoclip_proto::object_key itself.",
+    "ClipRequest::validate follows the SPEC literally. A very small hotkey_utc_ns (less than about 44 s) is accepted, but its window_utc start is then <= 0.",
+    "Nanosecond timestamps exceed 2^53, so a JavaScript consumer cannot parse these messages losslessly. The Worker must treat them as opaque.",
+    "Nonces are 12 random bytes per the SPEC. That is safe for the few dozen chunks per clip key, but the key must not be reused for billions of chunks.",
+    "Chunker does not validate fragment ranges; chunk range is the min-from/max-to union, and an invalid range is caught later by Manifest::validate."
+   ],
+   "files": [
+    "/home/user/code/crates/duoclip-proto/src/lib.rs",
+    "/home/user/code/crates/duoclip-proto/src/error.rs",
+    "/home/user/code/crates/duoclip-proto/src/types.rs",
+    "/home/user/code/crates/duoclip-proto/src/keys.rs",
+    "/home/user/code/crates/duoclip-proto/src/message.rs",
+    "/home/user/code/crates/duoclip-proto/src/codec.rs",
+    "/home/user/code/crates/duoclip-proto/tests/protocol.rs",
+    "/home/user/code/crates/duoclip-crypto/src/lib.rs",
+    "/home/user/code/crates/duoclip-crypto/src/error.rs",
+    "/home/user/code/crates/duoclip-crypto/src/key.rs",
+    "/home/user/code/crates/duoclip-crypto/src/seal.rs",
+    "/home/user/code/crates/duoclip-crypto/src/manifest.rs",
+    "/home/user/code/crates/duoclip-crypto/src/chunker.rs",
+    "/home/user/code/crates/duoclip-crypto/tests/crypto.rs"
+   ]
+  },
+  "review": {
+   "component": "duoclip-proto + duoclip-crypto (adversarial review and fix)",
+   "issues": [
+    {
+     "severity": "major",
+     "description": "duoclip-proto: ClipId, DeviceId and CrewId accepted every UUID spelling the uuid crate parses: uppercase, {braced}, urn:uuid: and un-hyphenated. The implementer had a test asserting that uppercase is accepted. One id then had several wire forms, which defeats string comparison in the Worker/relay (the Worker only accepts lowercase hyphenated) and the object-key/AAD canonical form.",
+     "fixed": true,
+     "note": "types.rs: replaced the derived Deserialize with a custom one that, for human-readable formats, accepts only 36-character lowercase hyphenated text. Non-human-readable formats still use Uuid::deserialize. Serialize is unchanged. The old test was replaced by ids_accept_only_canonical_lowercase_hyphenated_uuid_text, which covers uppercase, braced, urn, simple, whitespace, wrong length, bad separators, non-hex and non-ASCII, on both message fields and the bare id types."
+    },
+    {
+     "severity": "major",
+     "description": "duoclip-crypto: open_manifest had no bound on the sealed size. A peer holding the clip key could make a reader decrypt and parse an arbitrarily large blob. plain_sha256_hex has no length limit, so a single giant string defeats the 100_000-entry cap. serde_json errors from the decrypted body could also echo that huge content into CryptoError::Json.",
+     "fixed": true,
+     "note": "manifest.rs: added pub MAX_SEALED_MANIFEST_BYTES (32 MiB, which fits 100k entries; a test checks the margin). open_manifest rejects larger input with CryptoError::Manifest before decrypting, and seal_manifest refuses to produce such a manifest. Json error text is truncated to 200 chars. Tests: oversized_sealed_manifests_are_refused_without_being_parsed, sealed_manifest_limit_covers_the_maximum_chunk_count and the unit test json_errors_are_truncated."
+    },
+    {
+     "severity": "minor",
+     "description": "duoclip-crypto: Manifest::validate accepted any plain_len, up to u64::MAX. Readers that preallocate by plain_len, or sum the lengths, could abort or overflow on a malicious manifest.",
+     "fixed": true,
+     "note": "validate now rejects plain_len above duoclip_proto::MAX_CHUNK_BYTES - 32 (64 MiB ciphertext cap minus sealing overhead). Test manifest_rejects_implausible_plain_len covers the boundary, u64::MAX, and that 100k maximal entries sum without u64 overflow."
+    },
+    {
+     "severity": "minor",
+     "description": "duoclip-crypto Chunker: an empty-data fragment arriving after an oversized open chunk closed that chunk and started a new empty one. finish() then returned an empty chunk with is_last = true. This contradicted the chunker's own docs (empty fragments never close a chunk). The implementer's random-stream reference model encoded the same bug.",
+     "fixed": true,
+     "note": "chunker.rs: an empty fragment never closes a chunk, but it still extends the range. Fixed the reference model in the random-stream test. Added chunker_empty_fragment_never_closes_a_chunk and a seeded 200-round property test, chunker_never_emits_an_empty_chunk_for_a_non_empty_stream."
+    },
+    {
+     "severity": "minor",
+     "description": "duoclip-proto: ClipExtend only checked new_hotkey_utc_ns > 0. A value near i64::MAX was accepted, while ClipRequest rejects the same case. Any consumer computing new_hotkey + post + margin would overflow.",
+     "fixed": true,
+     "note": "message.rs: new_hotkey_utc_ns must also satisfy checked_add of the worst-case reach (MAX_POST_MS + MAX_MARGIN_MS). Test clip_extend_rejects_a_hotkey_whose_window_would_overflow covers the exact boundary and the wire path."
+    },
+    {
+     "severity": "minor",
+     "description": "duoclip-proto: AckStage::Rejected { reason } silently accepted unknown fields, because deny_unknown_fields was not set on that enum. The payload-less Bye message also accepted arbitrary extra fields (a known serde limitation for internally tagged unit variants).",
+     "fixed": true,
+     "note": "Added deny_unknown_fields to AckStage. decode now re-checks Bye and rejects any message object with more than the type key. The check runs only for Bye. Tests: ack_stage_and_reject_reason_reject_unknown_fields_and_shapes (confirmed to fail before the fix) and bye_with_extra_fields_is_rejected_on_decode. Message docs updated."
+    },
+    {
+     "severity": "minor",
+     "description": "duoclip-proto: ChunkRef carries clip_id, pov, quality and index plus a free-form object_key. Only the structural rules were checked, and there was no helper for receivers to tie the key to the announced fields. A peer could announce a chunk of one POV or clip while pointing at another object.",
+     "fixed": true,
+     "note": "Added ChunkRef::verify_object_key(crew) to compare the key exactly with object_key(crew, clip_id, pov, quality, index). validate() stays spec-literal. The validate docs and lib.rs docs now say receivers must call it. Test chunk_ref_verify_object_key_ties_the_key_to_the_announced_chunk covers each mismatching field, the manifest key, trailing junk and uppercase."
+    },
+    {
+     "severity": "minor",
+     "description": "Missing regression coverage: duplicate JSON keys, including a conflicting v between the version probe and the full parse. ClipKey equality was only tested for equal and unequal in bulk.",
+     "fixed": true,
+     "note": "Added duplicate_keys_never_slip_through and key_equality_detects_a_difference_in_any_single_byte. The reviewed duplicate-key cases already behaved correctly."
+    }
+   ],
+   "tests_passed": 104,
+   "checks": "After all edits: cargo fmt -p duoclip-proto -p duoclip-crypto -- --check is clean. cargo clippy -p duoclip-proto -p duoclip-crypto --all-targets -- -D warnings is clean. cargo test -p duoclip-proto -p duoclip-crypto gives 104 passing: proto 44 integration + 1 doctest, crypto 6 unit + 52 integration + 1 doctest. Runtime is under 0.3 s per crate and the RNGs are seeded. cargo check --target x86_64-pc-windows-gnu is OK for both crates, including --all-targets. cargo doc has no warnings. No Cargo.toml or Cargo.lock changes, and no new dependencies. I confirmed by mutation that the AckStage and canonical-UUID fixes are what make their tests pass. I probed UUID forms, Bye extras, ClipExtend overflow and the Chunker empty-fragment case against the original code first, and each was reproducible. SPEC.md files were left untouched.",
+   "remaining_risks": [
+    "The aes-gcm 'zeroize' feature is still not enabled, because it would change the shared Cargo.lock (aes would gain a zeroize dependency). ClipKey bytes are zeroized on drop, but the Aes256Gcm key schedule inside seal/open is not. Moving a ClipKey or passing a [u8;32] to from_bytes also leaves copies that cannot be wiped, and Message::ClipKey holds the key in a plain String.",
+    "validate_object_key stays spec-literal and the Worker's keys.ts is identical to it. It still allows 'clips/', a trailing '/', and '.' path segments like 'clips/a/./b'. Receivers must therefore use ChunkRef::verify_object_key, and the Worker must compare exact canonical keys instead of normalising paths. Rust object_key accepts any u32 index (7+ digits above 999_999), while the Worker caps indices at 999_999.",
+    "ClipRequest.sync_uncertainty_ns has no upper bound (i64::MAX is valid), and ClipAck.expected_bytes is unbounded. Consumers must use saturating or checked arithmetic. A tiny hotkey_utc_ns (under about 44 s) passes validation but gives a window_utc start <= 0. The extra 'empty window' rejection in ClipRequest::validate remains a deviation from the SPEC.",
+    "Manifest.plain_sha256_hex format is still not validated at open (verify() fails closed later), and seal_manifest does not call validate (per the SPEC). A buggy uploader that feeds the Chunker invalid fragment ranges would produce a manifest the readers reject. Manifest ranges may overlap or leave gaps (SPEC says only non-decreasing).",
+    "open_manifest returns incomplete manifests. Callers must check manifest.complete before treating a clip as whole, as the docs and the pipeline tests describe. A storage provider can still withhold data or replay an older incomplete manifest (availability), but not make a truncated clip look complete.",
+    "Nonces are 96-bit random per the SPEC. The key must not be reused for billions of seals. Nanosecond timestamps exceed 2^53, so JavaScript consumers (the Worker) must treat the messages as opaque. Serde's Content buffering still accepts an empty map as a unit variant (for example {\"pinned\":{}}), which is harmless."
+   ],
+   "summary": "I reviewed both crates against their SPECs, fixed eight issues, and added regression tests. All tests, fmt, clippy and the Windows check pass. Two issues were major.\n\n**Major fixes**\n- **UUID spellings (proto):** ids accepted uppercase, braced, `urn:uuid:` and un-hyphenated UUIDs, and the implementer had a test asserting that. Ids now deserialize only from lowercase hyphenated text, which matches the Worker, the object keys and the AAD.\n- **Manifest size (crypto):** `open_manifest` had no bound on the sealed size, and `plain_sha256_hex` had no length limit. A peer holding the key could make a reader parse an arbitrarily large manifest. I added `MAX_SEALED_MANIFEST_BYTES` (32 MiB), checked before decryption on open and enforced in `seal_manifest`. JSON error text is now truncated.\n\n**Minor fixes**\n- **`plain_len` (crypto):** a manifest entry could declare any `plain_len`, up to `u64::MAX`. It is now capped at 64 MiB minus 32 bytes.\n- **Chunker (crypto):** an empty fragment after an oversized chunk closed it and produced an empty `is_last` chunk. The implementer's random-stream reference test had the same bug, so I fixed it too.\n- **`ClipExtend` (proto):** `new_hotkey_utc_ns` near `i64::MAX` was accepted. It now has an overflow bound matching `ClipRequest`.\n- **Unknown fields (proto):** `AckStage` and `Bye` accepted unknown fields. Both now reject them. This goes beyond the SPEC.\n- **Key verification (proto):** I added `ChunkRef::verify_object_key(crew)`. Without it, a peer could announce a chunk of one POV or clip while pointing at another object. `validate()` itself is unchanged.\n- **Tests:** I added tests for duplicate JSON keys and per-byte key inequality.\n\n**Left as is**\n- Nonce handling, AAD binding, key redaction in Debug, constant-time key equality, the base64 edge cases, and truncation detection through `complete` and `is_last` were already correct.\n- I left the empty-window rule in `ClipRequest::validate`. It goes beyond the SPEC but is harmless.\n- The remaining risks are listed above."
+  }
+ },
+ {
+  "task": "worker",
+  "model": "sonnet",
+  "impl": {
+   "component": "worker",
+   "status": "ok",
+   "summary": "The Cloudflare Worker in /home/user/code/worker is implemented per SPEC.md: Ed25519 request auth, crews and invites, clip registry, quota-checked presigned R2 PUT/GET URLs (aws4fetch, 900 s), clip deletion, and an hourly cron sweep. I also wrote migrations/0001_init.sql, wrangler.toml and a Portuguese README.md (setup, lifecycle backstop, API reference). Both required checks pass, and a local run under `wrangler dev` (workerd with simulated D1 and R2) also worked. Presigned URLs were never tried against real R2, since there are no credentials here.\n\nTests: the D1 tests run the real SQL from src/db.ts on in-memory SQLite (`node:sqlite`) loaded with the real migration. R2, the clock and the RNG are in-memory and seeded. The suite is 231 tests in about 2.3 s, with no network. I broke eight things on purpose (quota limits, replay window, invite uses, membership, pov check, skew check, retry accounting) and the tests caught each one.\n\nThe local `wrangler dev` smoke test covered:\n- device registration, crew, invite and join;\n- clip registration, upload and download URLs, replay rejection;\n- DELETE removing exactly one clip's objects from the simulated R2;\n- the cron sweep.\n\nPresigned URLs match an independent SigV4 computation in the tests.",
+   "tests_passed": 231,
+   "checks": "cd /home/user/code/worker && npm run typecheck (tsc --noEmit, strict) -> OK, no errors. npm test (vitest run) -> 12 files, 231 tests passed in about 2.3 s; ran 3 times in a row with identical results. Extra: `wrangler deploy --dry-run` bundles OK and validates wrangler.toml (about 14 KiB gzip). Extra: `wrangler dev --local` smoke test passed (details above). The Rust cargo checks do not apply to this component.",
+   "deviations_from_spec": [
+    "Data model additions beyond the SPEC tables: `clips.bytes INTEGER NOT NULL DEFAULT 0` and a new table `clip_chunks(clip_id, pov, quality, idx, bytes)`. They make the per-clip 1.5 GiB cap atomic and mean retrying a chunk URL with the same size is not charged twice.",
+    "Sweep: R2 objects of expired clips are deleted at `expires_at < now`, but the clip row is dropped only once it expired more than 15 minutes ago (the next hourly run). This lets the next run remove an upload that landed through a still-valid presigned URL. The sweep handles at most 25 clips per run (free-plan subrequest limit) and also purges usage rows older than 7 days.",
+    "The SPEC does not define the upload-urls/download-urls response, so I chose `{expires_in, expires_at, headers (upload only), chunks:[{index,key,url}], manifest:{key,url}|null}`. `manifest` in the request is a boolean, and manifest bytes are not counted against quotas. The shape is documented in README.md and must be mirrored by the Rust client.",
+    "Status codes I picked where the SPEC is silent:",
+    "- 201 for a new device or clip, 200 when repeated.",
+    "- 404 `invalid_invite` for a bad, expired or used-up code.",
+    "- 409 `clip_exists`.",
+    "- 410 `clip_gone` / `clip_expired`.",
+    "- 413 `chunk_too_large` / `clip_quota_exceeded`.",
+    "- 429 `daily_quota_exceeded` with `Retry-After`.",
+    "- 400 `too_many_indices`.",
+    "- 401 bodies carry a `reason`, and `clock_skew` also returns `server_time_ms`.",
+    "Joining a crew you already belong to returns 200 and does not spend an invite use. Re-registering a device with the same key returns 200 and keeps the original display name.",
+    "UUIDs are validated as lowercase hyphenated 8-4-4-4-12 hex of any version, because the golden fixtures are `00000000-...` style (not v4). Chunk indices accepted by the API are 0..999999; the key builder itself accepts the full u32 range like the Rust `{:06}`.",
+    "Added `@types/node` as a devDependency (needed for the `node:sqlite` test shim and typings); runtime dependency is only `aws4fetch`. All versions are exact. `package.json` engines is `>=22.13`.",
+    "Beyond the SPEC layout I added worker-local `.gitignore` (ignores `.dev.vars`), `.dev.vars.example`, `src/{env,app,store,http,encoding,invite}.ts` and `test/helpers/*`. `wrangler.toml` also enables observability and uses placeholders for ACCOUNT_ID and database_id."
+   ],
+   "known_limitations": [
+    "Upload URLs sign `Content-Type` only, as the SPEC says. `Content-Length` is not signed, so quotas apply to declared sizes and a hostile member could upload more than declared. The 3-day R2 lifecycle rule bounds the damage; README.md explains how to sign it.",
+    "Real R2 behaviour is unverified: presigned URLs match an independent SigV4 implementation but were never used against real R2, because there are no credentials in this environment.",
+    "No built-in rate limiting. `POST /v1/devices` and `POST /v1/crews/join` should get Cloudflare rate-limiting rules (documented in README.md).",
+    "A presigned URL stays valid for 15 minutes after the clip is deleted. The two-pass sweep and the R2 lifecycle rule clean up any late upload.",
+    "`npm audit` reports 3 high-severity advisories in wrangler -> miniflare -> sharp. These are dev-only and not part of the deployed Worker; I did not force-upgrade.",
+    "The tests need Node >= 22.13 (built-in `node:sqlite` without a flag, and WebCrypto Ed25519)."
+   ],
+   "files": [
+    "/home/user/code/worker/package.json",
+    "/home/user/code/worker/package-lock.json",
+    "/home/user/code/worker/tsconfig.json",
+    "/home/user/code/worker/vitest.config.ts",
+    "/home/user/code/worker/wrangler.toml",
+    "/home/user/code/worker/.gitignore",
+    "/home/user/code/worker/.dev.vars.example",
+    "/home/user/code/worker/README.md",
+    "/home/user/code/worker/migrations/0001_init.sql",
+    "/home/user/code/worker/src/index.ts",
+    "/home/user/code/worker/src/routes.ts",
+    "/home/user/code/worker/src/auth.ts",
+    "/home/user/code/worker/src/keys.ts",
+    "/home/user/code/worker/src/presign.ts",
+    "/home/user/code/worker/src/db.ts",
+    "/home/user/code/worker/src/quota.ts",
+    "/home/user/code/worker/src/validate.ts",
+    "/home/user/code/worker/src/sweep.ts",
+    "/home/user/code/worker/src/store.ts",
+    "/home/user/code/worker/src/invite.ts",
+    "/home/user/code/worker/src/http.ts",
+    "/home/user/code/worker/src/encoding.ts",
+    "/home/user/code/worker/src/app.ts",
+    "/home/user/code/worker/src/env.ts",
+    "/home/user/code/worker/test/helpers/harness.ts",
+    "/home/user/code/worker/test/helpers/sqlite-d1.ts",
+    "/home/user/code/worker/test/helpers/memory-store.ts",
+    "/home/user/code/worker/test/auth.test.ts",
+    "/home/user/code/worker/test/config.test.ts",
+    "/home/user/code/worker/test/db.test.ts",
+    "/home/user/code/worker/test/encoding.test.ts",
+    "/home/user/code/worker/test/index.test.ts",
+    "/home/user/code/worker/test/invite.test.ts",
+    "/home/user/code/worker/test/keys.test.ts",
+    "/home/user/code/worker/test/presign.test.ts",
+    "/home/user/code/worker/test/quota.test.ts",
+    "/home/user/code/worker/test/routes-basic.test.ts",
+    "/home/user/code/worker/test/routes-clips.test.ts",
+    "/home/user/code/worker/test/sweep.test.ts",
+    "/home/user/code/worker/test/validate.test.ts"
+   ]
+  },
+  "review": {
+   "component": "worker",
+   "issues": [
+    {
+     "severity": "critical",
+     "description": "Manifest upload URL was unmetered and unbounded: manifest bytes were not counted against any quota and the presigned PUT carried no size bound, so a member could store arbitrarily large objects (up to the 5 GiB single-PUT limit) through the manifest key, repeatedly.",
+     "fixed": true,
+     "note": "upload-urls now requires manifest_size (1 byte to 1 MiB, else 413 manifest_too_large) whenever manifest is true. The manifest is charged like a chunk under the reserved pseudo index -1 in clip_chunks (clip, daily, and global quotas) and retries are free. Regression tests in test/abuse-limits.test.ts."
+    },
+    {
+     "severity": "critical",
+     "description": "Announced sizes were not enforced: Content-Length was not part of the presigned PUT signature, so a hostile member could announce 1 byte and upload far more. The quota only covered the declared size.",
+     "fixed": true,
+     "note": "Presigned PUT URLs now sign Content-Length (equal to the announced size) in addition to Content-Type (X-Amz-SignedHeaders=content-length;content-type;host). presign() refuses to mint a PUT URL without a valid contentLength (1..64 MiB). Responses carry content_length per chunk and for the manifest. Verified against an independent SigV4 computation in tests and under workerd via wrangler dev. NOT verified against real R2."
+    },
+    {
+     "severity": "major",
+     "description": "Open registration (POST /v1/devices) allowed unlimited sybil devices, each with its own 10 GiB/day quota, plus unbounded growth of crews, invites and clips: quota bypass and cost/storage abuse.",
+     "fixed": true,
+     "note": "Added migration 0002 (counters table, indexes) with atomic per-UTC-day counters: service-wide new devices/day (default 50, env MAX_NEW_DEVICES_PER_DAY, 0 closes registration), service-wide announced bytes/day (default 200 GiB, env MAX_GLOBAL_DAILY_BYTES, 429 global_quota_exceeded, full rollback of clip and device reservations), crews per device (20, 409 crew_limit, atomic conditional insert), active invites per crew (10, 409 invite_limit), clips registered per device per day (200, 429). Repeats and lost races do not consume or give the slot back."
+    },
+    {
+     "severity": "major",
+     "description": "Invite code brute force had no throttle: a registered (or sybil) device could guess join codes at request rate.",
+     "fixed": true,
+     "note": "Every join attempt is reserved atomically before the lookup (so parallel guesses cannot slip past) and refunded on success or already-member; 20 failed attempts per device per UTC day then yield 429 too_many_attempts with Retry-After, even for the correct code. Tested sequentially and with 25 parallel guesses."
+    },
+    {
+     "severity": "major",
+     "description": "Tiny-object flood: sizes only had to be >= 1 byte, so a clip could hold millions of 1-byte objects costing almost no quota but many R2 operations and sweep/delete work.",
+     "fixed": true,
+     "note": "Each object (chunks and manifest) is charged max(size, 256 KiB). A clip therefore holds at most 6144 objects and a device at most 40960 per day. additionalBytes/recordChunks store the charged value so retries stay free."
+    },
+    {
+     "severity": "major",
+     "description": "Sweep and DELETE could silently leave objects behind: deleteClipObjects stopped after 100 rounds without reporting it and the sweep then dropped the clip row, orphaning objects. The sweep also made up to ~55 subrequests per run (25 clips x list+delete plus D1 calls), above the 50 limit of the free plan, and DELETE on an already deleted clip returned 0 without cleaning late uploads.",
+     "fixed": true,
+     "note": "deleteClipObjects now returns {deleted, complete} and is bounded by maxCalls. The sweep has an R2 call budget (40 per run, max 20 clips per run), defers what does not fit (clips_deferred / clips_incomplete stats), never drops a row unless its prefix was fully emptied, and also purges the new counters. DELETE always re-runs the (idempotent) object deletion, so a second DELETE removes uploads that landed through still-valid presigned URLs, and reports complete:false if cut short."
+    },
+    {
+     "severity": "minor",
+     "description": "Ed25519 signature malleability: the replay table keys on the signature text, so (R, S+L) would be a second valid string for the same request on a non-strict verifier.",
+     "fixed": true,
+     "note": "verifySignature now rejects any signature whose S is not below the group order (hasCanonicalScalar), independent of runtime strictness (Node and workerd already reject it). Tested with a spy simulating a lax verifier."
+    },
+    {
+     "severity": "minor",
+     "description": "Invite code normalisation used toUpperCase(), so non-ASCII characters (dotless i, long s) were folded into valid code letters, giving several strings per code.",
+     "fixed": true,
+     "note": "ASCII-only case folding in parseJoin."
+    },
+    {
+     "severity": "minor",
+     "description": "Canonical-string path ambiguity risk for clients: the Worker signs url.pathname+url.search of the WHATWG-serialized URL (e.g. apostrophes and spaces in a query become %27/%20), so a client signing the raw string would get 401.",
+     "fixed": true,
+     "note": "Not a bypass (fails closed). Documented in README; no route uses a query string."
+    },
+    {
+     "severity": "minor",
+     "description": "Reviewed and found sound, no change needed: all 10 routes enforce auth or are intentionally public; replay table is a single atomic upsert with a window (10 min) that exactly covers the skew window (5 min), including the boundary; membership checks on every crew/clip route and pov==caller; object keys built only from validated lowercase uuids, enum quality and bounded integer index, with defense in depth validateObjectKey; every SQL statement uses bound parameters (guarded by a static test); body size is counted on the stream, not only on Content-Length; 500s are opaque and logs carry only the message; presigned URLs are single-method, 900 s, host+content-type+content-length signed.",
+     "fixed": false,
+     "note": "Regression tests added for these properties (IDOR matrix for outsiders and other-crew members, hostile ids/pov/quality fuzz with seeded RNG, simultaneous identical requests, replay edge, SQL injection strings, readBody with lying Content-Length, error leakage)."
+    }
+   ],
+   "remaining_risks": [
+    "Signed Content-Length in presigned PUT URLs is standard SigV4 and verified against an independent SigV4 implementation and under workerd, but never against real R2 (no credentials; I could not confirm R2 enforcement from docs, which only show content-type signed). If R2 rejects it, every upload would fail with 403 SignatureDoesNotMatch; README explains the fallback (remove the header from src/presign.ts, which reopens the size risk bounded by the 3-day lifecycle rule). Test with a real bucket before relying on it.",
+    "Behavior changes the Rust client and coordinator must mirror: upload-urls requires manifest_size whenever manifest is true; the PUT must send exactly the returned content_length and Content-Type: application/octet-stream and must not use chunked transfer encoding; responses add content_length (upload only); DELETE adds a complete boolean; new error codes registration_limited, global_quota_exceeded, too_many_attempts, clip_registration_limited (429) and crew_limit, invite_limit, manifest_too_large (409/413).",
+    "The new circuit breakers trade cost abuse for availability abuse: someone who finds the open registration endpoint can exhaust the daily new-device or global-bytes budget and cause 429s for that day (no data access). Recommended: after friends are registered set MAX_NEW_DEVICES_PER_DAY=0, and add Cloudflare rate-limiting rules (documented in README). Defaults (50 devices/day, 200 GiB/day, 20 crews, 10 invites, 20 failed joins/day, 200 clips/day) are judgment calls.",
+    "POST /v1/devices remains unauthenticated with no per-IP rate limit in code, and each signed request writes a replay row to D1; a registered device flooding requests is only bounded by Cloudflare rate limiting.",
+    "Counter reservation and the later insert are separate statements (D1 has no interactive transactions): a crash between them can leak a counter slot (fail-closed direction, resets daily). A persistently failing clip stays at the head of the oldest-first sweep queue and could starve others if 20+ fail at once.",
+    "Presigned URLs stay valid 15 minutes after a clip is deleted or expires and a long upload that started just before URL expiry can finish after the sweep; handled by the two-pass sweep, repeatable DELETE and the R2 lifecycle backstop.",
+    "Membership 403 vs unknown clip 404 reveals clip existence to authenticated devices; ids are random UUIDs so enumeration is impractical. DELETE by any crew member (per SPEC) lets a hostile member delete everyone's clips. There is no member removal or device revocation.",
+    "npm audit still reports dev-only advisories in wrangler -> miniflare -> sharp (not in the deployed Worker); not force-upgraded."
+   ],
+   "summary": "Adversarial review of /home/user/code/worker found and fixed 6 real issues (2 critical, 4 major) plus 3 minor hardening items. The critical ones were an unmetered, unbounded manifest upload and an announced size that was not enforced because Content-Length was not signed. The major ones were sybil quota bypass through open registration, invite brute force with no throttle, tiny-object floods, and sweep/DELETE bugs that could orphan objects or exceed the free-plan subrequest limit. Fixes are in src/{routes,db,quota,presign,validate,store,sweep,auth,app,env,index}.ts and the new migrations/0002_abuse_limits.sql. wrangler.toml and the README were updated too. The suite grew from 231 to 312 tests (security, abuse-limits, sweep, DELETE, db, quota, presign, validate and config regression tests). I ran 19 mutations (revert a fix, rerun the suite) and the suite caught all of them. `npm run typecheck` and `npm test` pass (3 identical runs, about 3 s), `wrangler deploy --dry-run` bundles, and a `wrangler dev --local` smoke test under workerd confirmed signed Content-Length, the manifest rules, join throttling, DELETE and the sweep. Real R2 enforcement of the signed Content-Length remains unverified. The Rust client must mirror the API changes listed under remaining_risks. I ran no git commands, and I removed the temporary .dev.vars and local D1 state.\"",
+   "tests_passed": 312,
+   "checks": "cd /home/user/code/worker: npm run typecheck (tsc --noEmit, strict) -> OK. npm test (vitest run) -> 15 files, 312 tests passed in about 3 s, three identical runs. Both migrations applied with `wrangler d1 migrations apply --local`. `wrangler deploy --dry-run` bundles and validates wrangler.toml. `wrangler dev --local` (workerd) smoke test OK: register, crew, clip, upload-urls signing content-length;content-type;host, manifest without manifest_size -> 400, wrong join codes -> 404, DELETE twice, scheduled sweep logs the new counters. 19 mutation checks all caught by the new tests. The Rust cargo checks do not apply to this component."
+  }
+ },
+ {
+  "task": "clock",
+  "model": "opus",
+  "impl": {
+   "component": "duoclip-clock",
+   "status": "ok",
+   "summary": "I implemented the whole clock crate per the SPEC: monotonic clocks, the SNTP packet codec (handles the 2036 rollover), samples, the per-source estimator, Marzullo-style combining, the slew-only AppClock with epochs and holdover, two-sided remap, the peer-to-peer cross-check, a blocking SNTP client and the poll scheduler. There is also a public `sim` module with the simulation harness. All four required checks pass, with no unsafe code and no new dependencies.\n\nThe main change from the SPEC is the estimator's error bound. I simulated the literal SPEC formula (`min_delay/2 + root_distance + 2·sigma + rate_uncert·|now − last|`) before replacing it. Error stayed within it in only 95–97% of steps, below the required 99%. With 5–20 ms delays its p99 was about 30 ms. The formula mixes the lowest-delay sample, often ten minutes old, with the distance from the newest sample.\n\nThe bound is now a worst case rather than a statistical guess. Each sample's error is at most `delay/2 + root_distance`. The bound is the largest gap between the fitted line and any line that passes within that limit of every sample. `rate_uncert` is a hard limit on the rate error, taken from the same samples. The fitted rate is clamped into the possible range when it falls outside.\n\nSimulation results (seeded, deterministic):\n- **Error within bound:** in 100% of steps on five networks, including asymmetric routes, Wi-Fi-like spikes and 5–20 ms each way.\n- **Bound size:** with 5–20 ms round trips the median bound is 6.3 ms and 99.78% of steps are under 15 ms. On a good wired path the median bound is 5.1 ms with a mean error of 0.08 ms.\n- **Rate:** within 0.92 ppm of the true drift after 10 minutes, over 40 seeds.\n- **Falseticker:** the server 200 ms off is excluded in every check.\n- **AppClock:** across 4000 random updates (12 steps) the clock never goes backwards within an epoch and never exceeds the slew limit. Steps happen only when allowed or Unsynced, and each one bumps the epoch by exactly one.\n- **End to end:** Synced 100% of the time, with a maximum live error of 0.26 ms. During a 30-minute outage the state goes to Holdover and the bound grows while still covering the error. After reconnecting it returns to Synced with no step.\n- **Two-sided remap:** mean error 0.21 ms versus 0.40 ms for the live estimate (243 clips).\n- **Peer-to-peer:** clocks that agree never trip the cross-check; a peer clock 80 ms off is always flagged.\n\n**Decision for the app:** while the clock is still slewing, `freeze(now)` gives the best estimate of true UTC, not the live `utc_at(now)`. The app should stamp the hotkey with `freeze(now).utc_at(now)` so it matches the capture window. Other agents writing the app crate need to know this.",
+   "tests_passed": 69,
+   "checks": "cargo fmt -p duoclip-clock (then --check: exit 0); cargo clippy -p duoclip-clock --all-targets -- -D warnings: exit 0, no warnings; cargo test -p duoclip-clock: 58 unit passed + 1 ignored (real network test; DNS/UDP 123 is unavailable in the sandbox, as expected), 10 simulation passed, 1 doctest passed, about 1 s of test time (2.4 s wall including build); cargo check -p duoclip-clock --target x86_64-pc-windows-gnu: OK (also with --all-targets: OK); cargo doc -p duoclip-clock --no-deps: 0 warnings.",
+   "deviations_from_spec": [
+    "Estimator bound: the literal SPEC formula is replaced. It measured 95-97% error-within-bound and a p99 bound of about 30 ms with 5-20 ms delays. The new bound is the exact worst case over all lines consistent with every sample's hard limit (delay/2 + root_distance), never larger than min_i(delay_i/2 + root_distance_i + |residual_i| + rate_uncert·|t - t_i|). It costs O(n²) per estimate, with n ≤ 64.",
+    "rate_uncert_ppb is a hard limit on the rate error, not a 1-sigma standard error. It comes from comparing every pair of samples, intersected with prior ± 50 ppm. The fitted rate is clamped into that range. With no fitted rate, rate = prior or 0 and the uncertainty is at most 50 ppm; it can be smaller when the samples constrain it.",
+    "Filter: if the lowest-delay quarter (at least 4 samples) spans less than min_span_for_rate_ns, the next-lowest-delay samples are added until it does. Otherwise a cluster of startup-burst samples forced rate = 0 in about 1.5% of seeds at 10 minutes.",
+    "Filter: the delay-ratio test never rejects samples within 0.5 ms of the minimum delay, so one sample with a clamped zero delay cannot reject all the others.",
+    "sigma_ns is the weighted residual standard deviation but is informational only; it is not part of the bound.",
+    "combine: the rate is averaged with weights 1/rate_uncert² (its own uncertainty) instead of 1/bound². rate_uncert is the mean of the uncertainties with those same weights (no credit for averaging). The bound is min_i(bound_i + |combined - offset_i|), not the bare smallest bound, so it still covers the best source's interval.",
+    "AppClock: freeze() returns the best-estimate line the live clock is slewing toward, not the live slewing line. status().bound_ns includes any slew still pending. A better-known rate is kept against less certain new ones, with its uncertainty aged by 1 ppm/hour. Drift-file uncertainty is floored at 5 ppm, bound growth at 1 ppm, and the target rate is clamped to ±1000 ppm. A step discards the history.",
+    "The SPEC test 'bound < 15 ms with symmetric 5-20 ms delays' was read as 5-20 ms round trip, which is what delay means in this crate (Sample::delay_ns, max_delay_ns). With 5-20 ms each way, the error stays within the bound 100% of the time, but the median bound is about 12 ms and the p99 is not under 15 ms.",
+    "parse_response checks the cookie before Kiss-o'-Death (so a spoofed KoD cannot disable a source) and KoD before LI=3 (real KoD packets carry LI=3). A zero receive timestamp is also rejected.",
+    "Items added beyond the SPEC: public `sim` module; NtpError extra variants (Timeout, Resolve, Io, LocalClockBackwards) and kod_code(); NtpTimestamp u64 helpers; ServerReply::root_distance_ns; FilterConfig::for_peer; SourceEstimator::set_rate_prior/clear/config; Combined::offset_at; FrozenMapping::bound_at; AppClock::pending_slew_ns/live_rate_ppb/epoch_id/last_update_local_ns; DriftState to_json/from_json/validate plus ClockError; PeerLink::new/add_exchange/estimate; predicted_peer_offset and fuse_relative; PollScheduler::new(now, rng)/with_seed/is_due/is_disabled/in_burst/interval_ns; SntpSource builders. SyncState serializes as \"SYNCED\" etc., matching docs 8.7."
+   ],
+   "known_limitations": [
+    "The bound is guaranteed only if each server is within its reported root distance and the drift is constant within the 15-minute window. Frequency wander is not modelled in the estimator, only through the AppClock floors.",
+    "SNTP is unauthenticated; NTS is not implemented. SntpSource uses the first resolved address and re-resolves after timeouts or socket errors.",
+    "The real-network test (time.cloudflare.com) is #[ignore]: the sandbox has no DNS or UDP 123. The UDP code path is covered by loopback fake-server tests (garbage, wrong-cookie, RATE KoD and timeout cases).",
+    "two_sided_mapping uses a simpler bound than the live estimate: still guaranteed, but looser. Above 256 samples, only the 256 lowest-delay ones constrain the bound, which keeps it guaranteed but looser.",
+    "combine() expects every view's estimate to be computed at the same now_local passed to it; bounds are used as given.",
+    "AppClock keeps at most 512 segments of history. utc_at for older times extrapolates the oldest kept segment: still monotonic, but no longer the value reported at the time.",
+    "While the clock slews, freeze(now).utc_at(now) and utc_at(now) differ by the pending slew. The app should stamp events with the frozen mapping.",
+    "PollScheduler stores a Box<dyn RngCore + Send> and implements Debug by hand."
+   ],
+   "files": [
+    "/home/user/code/crates/duoclip-clock/src/lib.rs",
+    "/home/user/code/crates/duoclip-clock/src/linear.rs",
+    "/home/user/code/crates/duoclip-clock/src/clock_source.rs",
+    "/home/user/code/crates/duoclip-clock/src/ntp.rs",
+    "/home/user/code/crates/duoclip-clock/src/sample.rs",
+    "/home/user/code/crates/duoclip-clock/src/estimator.rs",
+    "/home/user/code/crates/duoclip-clock/src/combine.rs",
+    "/home/user/code/crates/duoclip-clock/src/appclock.rs",
+    "/home/user/code/crates/duoclip-clock/src/remap.rs",
+    "/home/user/code/crates/duoclip-clock/src/peer.rs",
+    "/home/user/code/crates/duoclip-clock/src/sntp.rs",
+    "/home/user/code/crates/duoclip-clock/src/schedule.rs",
+    "/home/user/code/crates/duoclip-clock/src/sim.rs",
+    "/home/user/code/crates/duoclip-clock/tests/simulation.rs"
+   ]
+  },
+  "review": {
+   "component": "duoclip-clock",
+   "issues": [
+    {
+     "severity": "major",
+     "description": "AppClock::update could rewrite time it had already published. An update whose now_local was older than the previous update's (computed before a lock, applied after a newer one) cut the live mapping at that older time. utc_at for instants already read changed, and readings could go backwards with no epoch increment.",
+     "fixed": true,
+     "note": "update() now applies such an update at the last update's time, so the mapping before that point is never rewritten. The contract is documented: read the live clock at the current monotonic time, and use freeze() for future instants. Tests late_update_cannot_rewrite_published_time and shuffled_update_times_never_move_readings_backwards both fail on the original code."
+    },
+    {
+     "severity": "major",
+     "description": "The uncertainty of a kept rate compounded at every update. rate_at_local was not moved forward when the rate was kept, so each update added wander x (now - original time) again: about 139 ppm after 1000 updates in 1000 s instead of +0.28 ppm. This inflated the persisted drift-state uncertainty and the holdover bound growth, and dropped a good drift-file rate too early.",
+     "fixed": true,
+     "note": "rate_at_local is now set to now on every update, so aging is linear. Test kept_rate_uncertainty_ages_linearly fails on the original."
+    },
+    {
+     "severity": "major",
+     "description": "A kept rate (for example from the drift file, at least 5 ppm uncertainty) was kept against a new measured rate that contradicted it by more than both uncertainties combined. The target was then extrapolated with a provably wrong rate and too small an uncertainty, which can make freeze/holdover bounds dishonest.",
+     "fixed": true,
+     "note": "The kept rate is now only retained when |c.rate - kept| <= c.rate_uncert + kept_uncert. Test contradicted_kept_rate_is_dropped fails on the original."
+    },
+    {
+     "severity": "major",
+     "description": "On jittery paths the WLS estimate at `now` had large tail errors. The SPEC's steep weights let the slope come from 1-3 lucky samples, and extrapolating it sometimes put the line far off-center or outside the interval the samples allow. Measured on 12 seeds x 3 h: max error 41 ms with p99 11 ms (Wi-Fi-like), and max 23 ms with p99 8.7 ms (5-20 ms each way). Bounds were p99 21.6 ms and 24 ms.",
+     "fixed": true,
+     "note": "The line's offset (not its slope) is now kept within the central quarter of the feasible interval at `now` (Fit::centered_at), also in two_sided_mapping. This is rigorous: the bound can only shrink. Wi-Fi-like: max error 8.9 ms, p99 5.3 ms, bound p99 15.1 ms. Each way: max 10.1 ms, p99 5.6 ms. Wired paths are unchanged (mean error 0.096 ms). This deviates from the SPEC's pure-WLS offset. Tests: centering_never_increases_the_bound and the simulation suite."
+    },
+    {
+     "severity": "minor",
+     "description": "The per-sample hard bound was not hard. The offset is measured over [t1, t4] but assigned to t4, so with drift r the error can exceed delay/2 + root_distance by |r| x delay. That is 7.5 us at 50 ppm and 150 ms, against the old 1 us slack.",
+     "fixed": true,
+     "note": "Slack is now 1 us + 1e-4 x delay, derived from theta_meas - theta(t4) = -r(t4-t1)/2 + (A-B)/2 + (e2+e3)/2. Test sample_bound_covers_worst_case_asymmetry_with_drift fails on the original. Exact-value unit tests were updated."
+    },
+    {
+     "severity": "minor",
+     "description": "PollScheduler::reburst restarted a full 6-query, 2 s burst on every call, so a flapping network (frequent resume or network-change events) turned into continuous 2 s polling. This breaks the docs 8.3 politeness rule (never more than one query per 15 s) and risks KoD or a ban.",
+     "fixed": true,
+     "note": "A burst in progress is no longer restarted, and a new burst starts at most once per MIN_REBURST_SPACING_NS (5 min, new pub const). A sooner reburst only brings the next query forward to last attempt + 15 s. Tests: reburst_storm_is_rate_limited, plus a rewritten reburst_after_network_change."
+    },
+    {
+     "severity": "minor",
+     "description": "In the LP worst-case bound, pairs with x_k < x_j were silently skipped, but the points were not sorted by time. Windows sorted by delay (the remap's capped >256-sample window) or inserted out of order lost pair constraints, giving a looser bound and weaker centering.",
+     "fixed": true,
+     "note": "The LP points are now sorted by x. Tests: lp_interval_does_not_depend_on_sample_order (unit) and insertion_order_does_not_matter."
+    },
+    {
+     "severity": "minor",
+     "description": "MAX_SEGMENTS = 512 kept only about 45 min of live history at steady state, and only minutes under update storms. After that, utc_at for older times extrapolates the oldest kept segment (still monotonic, but no longer the value reported at the time).",
+     "fixed": true,
+     "note": "Raised to 2048 (about 3 h with 6 sources) and documented. The limit is still finite by design."
+    },
+    {
+     "severity": "minor",
+     "description": "DriftState JSON round trip is not bit-exact: serde_json's default float parser can be 1 ulp off. pipeline_end_to_end asserted exact equality and broke as soon as the values changed.",
+     "fixed": true,
+     "note": "The test now compares with a 1e-9 relative tolerance. The code is unchanged: exact round trips would need serde_json's float_roundtrip feature, which applies workspace-wide."
+    },
+    {
+     "severity": "minor",
+     "description": "Test gap: no end-to-end test caught a slew applied in the wrong direction (mutation M5 survived every simulation test), because the startup step lands within a fraction of a millisecond.",
+     "fixed": true,
+     "note": "Added pipeline_slews_away_a_sub_threshold_initial_error: the OS guess is 400 ms off, so the clock must converge by slewing alone, with no step, staying honest and reaching SYNCED. M5 is now caught."
+    },
+    {
+     "severity": "minor",
+     "description": "Under the each-way reading of the SPEC (5-20 ms each way, 10-40 ms round trips), 'bound < 15 ms after warm-up' cannot hold at 99% for any rigorous bound. The floor is min_delay/2 of about 5.5 ms plus extrapolation; even the minimax center gives p99 of about 16 ms.",
+     "fixed": false,
+     "note": "This run gave a median of 11.46 ms and 88.9% below 15 ms (80.6% before centering), with 100% honesty. A new test documents this reading (median < 13 ms, at least 80% below 15 ms). The round-trip reading still passes: median 6.1 ms, 100% below 15 ms."
+    }
+   ],
+   "tests_passed": 93,
+   "checks": "All required checks pass. cargo fmt -p duoclip-clock (then --check: OK). cargo clippy -p duoclip-clock --all-targets -- -D warnings: clean. cargo test -p duoclip-clock: 61 unit (1 ignored real-network test), 20 new adversarial, 11 simulation and 1 doctest passed, about 1 s of test time. cargo check -p duoclip-clock --target x86_64-pc-windows-gnu (also --all-targets): OK. RUSTDOCFLAGS=-D warnings cargo doc --no-deps: OK. No new dependencies.\n\nChecked mathematically, no defect found:\n- offset/delay formulas and sign conventions, for both server and peer (also tested end to end in sign_conventions_server_and_peer);\n- ppb units, and the WLS weights (a scaled but equivalent form);\n- feasible slope range: it is the exact projection (Fourier-Motzkin);\n- LP worst case: the duality basis argument holds;\n- Marzullo: brute force over 3000 random cases with touching endpoints and ties;\n- fixed-point monotonicity: floor(a+b) >= floor(a)+floor(b) with q > -2^48, plus exact continuity at every cut;\n- slew clamp and duration; step rules (exact threshold boundaries); holdover growth; local_at as the inverse of utc_at across 300 segments;\n- NTP: era pivot around 2036 and at extreme pivots; rejection order (cookie before KoD before LI=3);\n- scheduler: 15 s minimum interval and 1024 s caps (property test over 200 seeds).\n\nMutation testing on a scratch copy: all 11 mutants are killed. Wrong rate sign in offset_at kills 15 tests, including the 99% honesty and pipeline tests. Wrong offset sign kills 19. Halved bound kills the honesty tests. Dropping delay/2 from the hard bound kills 12. Negated WLS slope kills the rate convergence test. Disabling falseticker rejection, using one-sided remap and removing holdover growth are all caught. Five of the new adversarial tests fail on the original code: two for the late update, one each for aging, the contradicted rate and the slack.",
+   "remaining_risks": [
+    "The rate uncertainty is a hard worst case: the slope range over the 15 min window is (B_j+B_k)/dt, about 10-36 ppm. Holdover and freeze bounds therefore grow fast (around 18 ms per 30 min outage): conservative, never dishonest. A longer-term rate model would tighten them.",
+    "Bound honesty depends on four assumptions: each server is within its root distance; drift is constant over the window and the true drift is within prior ± 50 ppm; |rate| <= 100 ppm; server processing time is small (it is not stored in Sample).",
+    "utc_at readings are guaranteed monotonic only for local times not after the next update's now_local. Reading the live clock at future instants can still see values change. In a multithreaded app, read now_local after taking the lock that guards update().",
+    "freeze() returns the target (best-estimate) line, not the live line, as the implementer chose. freeze(now).utc_at(now) is therefore not monotonic across updates: it moves with new information. The app crate must use it for hotkey stamps and capture windows knowingly.",
+    "CENTER_FRACTION = 1/8 was tuned by simulation. A pure midpoint gives tighter bounds and tails but doubles the sub-ms mean error on wired paths.",
+    "The SPEC's 'bound < 15 ms with symmetric 5-20 ms delays' is met only in the round-trip reading. In the each-way reading the median is 11.46 ms, and no rigorous bound can reach 99%.",
+    "DriftState JSON floats may come back 1 ulp off (serde_json default parser).",
+    "MAX_SEGMENTS is finite (2048). Under extreme update storms, very old utc_at values become an extrapolation of the oldest kept segment.",
+    "SNTP is unauthenticated (NTS is not implemented). The SPEC's real-network test remains #[ignore]."
+   ],
+   "summary": "I reviewed /home/user/code/crates/duoclip-clock against its SPEC and docs section 8, fixed every real issue found and added 20 adversarial tests plus new unit and simulation tests. All required checks pass and no dependencies were added.\n\nThe fixes:\n- **appclock.rs:** an update that arrived late can no longer rewrite time already read, the uncertainty of a kept rate now ages linearly instead of compounding, a kept rate that a new measurement contradicts is dropped, and the history cap was raised.\n- **estimator.rs:**\n  - each sample's bound now allows for drift during the round trip;\n  - the worst-case constraint points are sorted by time;\n  - the fitted line is kept in the central quarter of the range the samples allow at `now` (slope unchanged), also in `two_sided_mapping`. The bound can only shrink. On Wi-Fi-like paths the worst error drops from 41 ms to 8.9 ms; wired paths are unchanged.\n- **schedule.rs:** a burst in progress is no longer restarted, and new bursts start at most once per 5 min (new constant `MIN_REBURST_SPACING_NS`).\n\nTest files:\n- **New:** /home/user/code/crates/duoclip-clock/tests/adversarial.rs.\n- **Edited:** /home/user/code/crates/duoclip-clock/tests/simulation.rs.\n\nMutation testing confirms the statistical tests are not tautological: wrong signs, a halved bound and a broken slew are all caught.\n\nTwo points remain for the app crate:\n- freeze() returns the best-estimate line, so stamps taken with it can move between updates.\n- Read the live clock only at the current monotonic time."
+  }
+ },
+ {
+  "task": "buffer",
+  "model": "opus",
+  "impl": {
+   "component": "duoclip-buffer",
+   "status": "ok",
+   "summary": "I implemented crates/duoclip-buffer to SPEC.md and docs section 6, including the 6.6 edge cases. No new dependencies were added, and Cargo.toml and Cargo.lock are unchanged.\n\n- **RingBuffer:** video is stored as whole GOPs and audio per track. Eviction drops whole GOPs while (newest video pts − oldest keyframe pts) > max_duration or bytes > max_bytes, and the GOP still being written is never evicted. Audio older than the oldest keyframe is trimmed after each eviction step. Pushing a packet for an unknown track gives UnknownTrack, a dts going backwards (or a keyframe pts going backwards) gives OutOfOrder, and an error leaves the ring unchanged. snapshot_from returns shared Arcs sorted by (dts, track).\n- **LocalWindow::compute:** fully checked arithmetic; eps widens both ends; max_len is capped by moving the end earlier. should_extend compares the two windows as intervals and saturates on extreme values.\n- **ClipCollector:** pins Arcs from keyframe_at_or_before(start), or from the oldest keyframe with start_missing set. A track reaches the end when it delivers a packet with pts ≥ end, which absorbs encoder latency and audio/video skew. Packets are deduplicated by (track, dts), and packets older than the pinned keyframe are ignored. Finalization happens when all tracks reached the end, at end + timeout, on the first tick of a late request, or on source end. Packets seen past the end are held until finalization, so an extension that arrives after a track already passed the old end leaves no hole. Extensions are capped at start + max_len. Coverage reports start_missing, end_truncated, truncated_by_source_end, actual start and end, and gaps.\n- **Fragments:** one per GOP. A fragment is released only when its closing keyframe is included in the clip and every audio track has delivered a packet with pts at or past that keyframe; the last ones are released at finish. Audio goes to the fragment containing its pts, indices are contiguous from 0, and every packet is in exactly one fragment.\n- **ClipManager:** request is idempotent for active clips and for the last 1024 finished clip ids, so a re-sent request after reconnect is still a duplicate. It returns TooManyActive or MemoryBudget when limits are hit. Overlapping clips share the same Arcs, and pinned_bytes counts each packet held by several clips once.\n- **Synthetic stream generator (pub mod synth):** seeded SplitMix64 RNG; 60 fps video with an IDR every 60 frames and larger keyframes; 2–3 audio tracks with 20 ms frames offset ±200 ms from the video; per-packet arrival jitter that keeps each track in order; optional video gaps and track stops. Payloads are slices of a static buffer, so tests allocate almost nothing.\n- **Tests (36 in total, about 1.5 s):** every test listed in the SPEC, plus two randomized property tests. The first runs 48 seeds of random configs, interleavings, request/extend/tick/drain/source-end sequences and injected bad packets, and asserts that late, partial, truncated, extended, gap and both limit-error paths were all reached. The second feeds nonsense input (extreme i64 timestamps, negative durations, random windows) and checks it never panics.",
+   "tests_passed": 36,
+   "checks": "cargo fmt -p duoclip-buffer (then `-- --check`: clean); cargo clippy -p duoclip-buffer --all-targets -- -D warnings: exit 0, no warnings; cargo test -p duoclip-buffer: 35 integration tests + 1 doctest passed in 6 test binaries (collector 14, manager 8, property 2, ring 7, window 4, doc 1), about 1.5 s; cargo check -p duoclip-buffer --target x86_64-pc-windows-gnu: Finished OK; cargo doc -p duoclip-buffer --no-deps: no warnings.",
+   "deviations_from_spec": [
+    "source_ended: if every track had already reached the end, the clip is finalized as complete (truncated_by_source_end = false, end_truncated = false). truncated_by_source_end = true only when finalization really happens early, matching docs 6.6 ('Finaliza antes da hora').",
+    "A duplicated track id in the config is rejected with BufferError::UnknownTrack(id). No new error variant was added, so exhaustive matches in other crates keep compiling.",
+    "extend_end only lengthens the clip: an end that is not later than the current one is ignored. ClipManager::extend returns UnknownClip for unknown or already-finalized clips.",
+    "Late request means window.end < now_local at construction. Per the SPEC it is finalized on its next tick whatever the track state, and end_truncated says whether every track had data past the end.",
+    "Only keyframes included in the clip (pts < end) delimit fragments. The GOP closed by a keyframe at or after the end is released at finish, so a later extension never adds packets to an already-released fragment.",
+    "A packet whose pts is older than the end of an already-released fragment (possible only with non-monotonic pts) is dropped from the clip, so the 'exactly one fragment' rule holds.",
+    "MemoryBudget is checked only at request time. The projection counts every packet referenced by any clip (new pre-roll and undrained fragments included), each shared packet once, as if the ring had already evicted it all (worst case). Packets held past the window end are left out because they are freed at finalization.",
+    "Ring additions: video before the first keyframe is dropped. A safety valve trims each audio track to (its newest pts − max_duration − 2 s), which matters only if video stalls. bytes() can exceed max_bytes only by the latest GOP plus the audio after its keyframe.",
+    "LocalWindow::compute treats negative pre/post/margins/eps/max_len as 0, and returns Overflow for an inverted window (end < start).",
+    "ClipManager::push ignores now_local (finalization happens in tick).",
+    "If no video was included, Coverage has actual_start_ns = actual_end_ns = window.start and start_missing = true. A clip with no video is released as one audio-only fragment.",
+    "Additive API beyond the SPEC: pub mod synth (SynthConfig, SynthStream, SynthRng, SynthAudio); NS_PER_SEC; FINISHED_ID_MEMORY; TrackInfo::{video, audio}; RingConfig::with_tracks; ManagerConfig::with_tracks; CollectConfig: Default; RingBuffer::{gop_count, tracks, max_duration_ns, max_bytes}; ClipCollector::{clip_id, window}; ClipManager::{active_windows, is_active, merge_tolerance_ns, held_bytes}; LocalWindow::len_ns; Packet::{end_pts_ns, size}; Fragment::bytes. Serde derives on the plain data types; BufferError also derives Clone, PartialEq, Eq."
+   ],
+   "known_limitations": [
+    "No re-anchoring: if the ring has no video at request time and the window start is in the future, video starts at the first keyframe at or after the start (start_missing).",
+    "A configured track that never produces packets (e.g. mic disabled but still configured) makes every clip wait for the timeout, marks it end_truncated, and holds back fragments until the clip finishes. The app should configure only active tracks.",
+    "FinishedClip keeps every packet and drained fragments share the same Arcs, so writing fragments to disk does not free RAM until the FinishedClip (and the fragments) are dropped (docs 6.5 release-after-write is not modelled).",
+    "Fragments of finished clips stay queued in ClipManager until drain_fragments is called. They count against the pin budget, so a caller that never drains eventually gets MemoryBudget rather than unbounded growth.",
+    "pinned_bytes / held_bytes cost O(held packets), deduplicating by Arc pointer; meant for request time or a low-rate UI, not per packet. The test for 'no longer held by the ring' is an approximation: pts older than the ring's oldest keyframe.",
+    "Late requests finalize on the next tick (per the SPEC), so an audio track lagging by up to ~500 ms can miss its last few hundred ms when the request lands just after the end."
+   ],
+   "files": [
+    "/home/user/code/crates/duoclip-buffer/src/lib.rs",
+    "/home/user/code/crates/duoclip-buffer/src/types.rs",
+    "/home/user/code/crates/duoclip-buffer/src/ring.rs",
+    "/home/user/code/crates/duoclip-buffer/src/window.rs",
+    "/home/user/code/crates/duoclip-buffer/src/collector.rs",
+    "/home/user/code/crates/duoclip-buffer/src/manager.rs",
+    "/home/user/code/crates/duoclip-buffer/src/synth.rs",
+    "/home/user/code/crates/duoclip-buffer/tests/common/mod.rs",
+    "/home/user/code/crates/duoclip-buffer/tests/ring.rs",
+    "/home/user/code/crates/duoclip-buffer/tests/collector.rs",
+    "/home/user/code/crates/duoclip-buffer/tests/manager.rs",
+    "/home/user/code/crates/duoclip-buffer/tests/window.rs",
+    "/home/user/code/crates/duoclip-buffer/tests/property.rs"
+   ]
+  },
+  "review": {
+   "component": "duoclip-buffer",
+   "issues": [
+    {
+     "severity": "critical",
+     "description": "Distinct packets that share a dts on one track were silently dropped. The collector deduplicated with `dts <= last_dts`, but the ring accepts non-decreasing dts and keeps them. Split video units, a repeated IDR timestamp and doubled audio frames were all lost: 79 packets in one test clip, and 4 IDRs in another. A lost P-frame corrupts decoding of the rest of its GOP.",
+     "fixed": true,
+     "note": "TrackState::admit now drops a packet only if its dts is older than the last one, or if it is the same Arc as, or equal in content to, a packet already seen at that dts. At most 8 are remembered per dts, so the check stays O(1). Exact re-deliveries are still dropped. Arrival order is kept for packets sharing (track, dts) in the clip and in every fragment."
+    },
+    {
+     "severity": "major",
+     "description": "A window whose start is in the future (friend's clock ahead, pre = 0, or a bogus request) did not re-anchor. The clip pinned the ring's newest GOP, kept every live packet until the end, and reported the wrong actual_start. Memory grew without bound, because MemoryBudget is checked only at request time (a start 1 h ahead would hold about 1 h of video). The long-run test hit this through the 'friend clock ahead' path. Separately, with an empty ring, keyframes before the start were rejected, so a start just ahead became start_missing.",
+     "fixed": true,
+     "note": "Each newer keyframe at or before the start replaces the anchor and older GOPs and audio are dropped (amortized O(1)). This is safe because no fragment can have been released yet. When the ring had no video, any live keyframe can anchor. Held memory before the start is now at most about 2 GOPs."
+    },
+    {
+     "severity": "major",
+     "description": "Finalization could never happen for a window far in the future or near i64::MAX. `end + timeout` saturates, and no packet ever reaches the end, so the clip held an active slot forever (TooManyActive for every later request).",
+     "fixed": true,
+     "note": "The timeout deadline is now min(end, created + max_len) + timeout. For any window that starts at or before its request this is exactly end + timeout. Tested with windows 1e6 s ahead, at [MAX-5s, MAX), at [MAX, MAX) and inverted at the extremes."
+    },
+    {
+     "severity": "major",
+     "description": "Packets beyond start + max_len were parked although no extension could ever include them. With a dead track and a long timeout, parked memory grew until the timeout: 59.6 MB held instead of 19.9 MB in the test.",
+     "fixed": true,
+     "note": "Only packets with pts < start + max_len are parked. held_bytes now equals exactly the bytes of [anchor, start + max_len)."
+    },
+    {
+     "severity": "major",
+     "description": "drain_ready_fragments re-partitioned the whole pending-audio Vec for every fragment. With a dead track and short GOPs this is O(fragments x audio), quadratic at finish. It also scanned pending video linearly for the next keyframe on every call, which is O(n) per call with very long GOPs.",
+     "fixed": true,
+     "note": "Pending video is now a VecDeque of GOPs, so the boundary lookup is O(1). Pending audio is a min-heap ordered by (pts, arrival), O(log n) per packet. Finishing 9060 one-frame GOPs with a dead track now takes about 6 ms."
+    },
+    {
+     "severity": "minor",
+     "description": "A keyframe repeating the previous keyframe's pts created a zero-length fragment [k, k) that still held packets, breaking the half-open fragment invariant. Combined with the dedupe bug, the second IDR was also lost.",
+     "fixed": true,
+     "note": "Such a keyframe now stays in the current GOP's fragment, so fragments are never empty."
+    },
+    {
+     "severity": "minor",
+     "description": "The test suite checked structure but not completeness: pre-roll loss, lost live packets, wrong anchors or wrong end_truncated flags would all have passed.",
+     "fixed": true,
+     "note": "Added an independent Oracle in tests/common. It checks the ring holds exactly what its retention rules promise, recomputes the pin keyframe, re-anchors and derives each clip's exact expected packet set. It also checks the coverage flags and that no fragment is released before every audio track passed its end. It is wired into the 48-seed property test and the new adversarial tests. I mutation-tested it: an off-by-one in the ring's audio snapshot filter, readiness ignoring one audio track, and parked packets dropped on extend were all caught."
+    },
+    {
+     "severity": "minor",
+     "description": "A late request is finalized on its next tick, as the SPEC requires. An audio track lagging by up to about 500 ms can lose its last few hundred ms when the request lands just after the end.",
+     "fixed": false,
+     "note": "Left as specified. The oracle confirms the clip holds exactly what arrived before that tick, and end_truncated is accurate."
+    },
+    {
+     "severity": "minor",
+     "description": "A configured track that never produces packets holds back every fragment until the clip finishes, per the SPEC's literal readiness rule. Crash-safe streaming to disk is then lost for that clip.",
+     "fixed": false,
+     "note": "Left as specified. The app should configure only active tracks. Finalization still happens via the timeout, and a test covers it."
+    }
+   ],
+   "tests_passed": 47,
+   "checks": "- `cargo fmt -p duoclip-buffer`, then `-- --check`: clean.\n- `cargo clippy -p duoclip-buffer --all-targets -- -D warnings`: exit 0, no warnings.\n- `cargo test -p duoclip-buffer`: 47 passed (adversarial 11, collector 14, manager 8, property 2, ring 7, window 4, doctest 1). Execution time about 4.3 s summed: property 3.1 s, adversarial 1.0 s.\n- `cargo check -p duoclip-buffer --target x86_64-pc-windows-gnu`: Finished OK.\n- `RUSTDOCFLAGS='-D warnings' cargo doc -p duoclip-buffer --no-deps`: clean.\n- Before the fix, 7 of the 11 new adversarial tests failed against the original code, confirming the bugs.\n- Mutation check: 3 injected bugs (ring snapshot filter, fragment readiness, parked packets on extend) were each caught, and the sources were restored (verified with cmp).\n- No new dependencies; Cargo.toml and Cargo.lock are unchanged; the public API is unchanged.\n- I ran one read-only `git status` by mistake; it changed nothing.",
+   "remaining_risks": [
+    "MemoryBudget is checked only at request time. Post-roll growth (up to max_len) is not projected, so actual pinned memory can exceed pin_budget_bytes during collection.",
+    "A late request whose start the ring already evicted does not borrow pre-roll from another active clip that still pins it (docs 6.6 sharing could extend its coverage). It is reported as start_missing instead.",
+    "Video stalled before the window start: the clip keeps the last GOP before the stall, which future P-frames need for decoding. actual_start can therefore be far before the window start, and the hole appears in gaps only if video resumes.",
+    "The dedupe memory is bounded at 8 packets per dts. Beyond 8 distinct packets sharing one dts, an exact re-delivery of one of the extra packets is not recognised. Two content-identical packets at the same dts are treated as one.",
+    "FinishedClip and its fragments share Arcs, so RAM is freed only when both are dropped (docs 6.5 release-after-write is not modelled). Undrained fragments of finished clips count against the pin budget until drain_fragments is called.",
+    "union_bytes (used by request, pinned_bytes and held_bytes) is O(held packets). That is fine at request time or a UI rate, but not per packet.",
+    "For a window far in the future, the clip is finalized at created + max_len + timeout as end_truncated. It contains only the last GOP before the start (actual_end <= start), and consumers should treat it as uncovered."
+   ],
+   "summary": "The review found 6 real bugs in duoclip-buffer and I fixed all of them; all 47 tests pass along with fmt, clippy, the Windows check and rustdoc.\n\n**Bugs fixed:**\n- **Critical, lost packets:** distinct packets sharing a dts on one track were silently dropped, including split video units and a repeated IDR timestamp. The fix keeps them and still drops true re-deliveries (same Arc, or equal content at the same dts).\n- **Future-start windows:** no re-anchoring, so memory grew without bound and actual_start was wrong. This is fixed, as is the empty-ring case where a start just ahead was reported as start_missing.\n- **Clips that never finalized:** windows far in the future or near i64::MAX held an active slot forever. The timeout deadline is now capped at created + max_len + timeout.\n- **Parking:** packets beyond start + max_len were parked although no extension could include them. They are no longer kept.\n- **Quadratic fragment release:** pending audio was re-partitioned for every fragment and pending video was scanned linearly. These are now a GOP queue and a min-heap; finishing 9060 fragments takes about 6 ms.\n- **Empty fragments:** a repeated keyframe timestamp produced a [k, k) fragment holding packets. That keyframe now stays in the current GOP.\n\n**Changes from the SPEC's wording:**\n- Dedupe is by older dts, or by the same packet at the same dts, instead of by (track, dts) alone.\n- A clip re-anchors to newer keyframes at or before its start, and with no video in the ring any live keyframe can anchor it.\n- The timeout deadline is min(end, created + max_len) + timeout.\n- Only packets that an extension could still include are parked.\n- A repeated-IDR fragment can hold two keyframes with the same pts.\n- In the test helpers, `assert_sorted_unique` now allows distinct packets that share (dts, track), but still rejects duplicates.\n\n**Tests:**\n- New `tests/adversarial.rs` (11 tests) covers equal timestamps within and across tracks, future, far-future and i64-extreme windows, parking bounds, a dead track with one-frame GOPs, tracks starting late, a 12-minute run with 33 clips, extend after Done and out-of-order packets. Before the fix, 7 of them failed on the original code.\n- A new reference model in `tests/common/mod.rs` (Oracle) checks every clip made through the manager. Per clip, it derives the exact expected packet set from the push log and the ring's full contents, independently of the ring's own lookups. I wired it into the 48-seed property test, which now also sends occasional far-future requests.\n\nTwo SPEC-mandated limits remain: a late request finalizes on its next tick, which can cut lagging audio, and a configured track that never sends packets holds back fragments until the clip finishes.\n\nI only changed `src/collector.rs` (internals), `tests/common/mod.rs`, `tests/property.rs` and the new `tests/adversarial.rs`, all under `/home/user/code/crates/duoclip-buffer/`. ring.rs, manager.rs, window.rs and types.rs are unchanged. No new dependencies, and the public API is unchanged."
+  }
+ }
+]

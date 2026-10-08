@@ -9,6 +9,11 @@ license.workspace = true
 [dependencies]
 thiserror.workspace = true
 
+# `#[windows::core::implement]` expands to `::windows_core::...` paths, so the COM completion
+# handler needs windows-core as a direct dependency (same version the `windows` crate uses).
+[target.'cfg(windows)'.dependencies.windows-core]
+version = "0.62"
+
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [
@@ -22,6 +27,7 @@ features = [
   "Win32_System_Threading",
   "Win32_System_Performance",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_SystemInformation",
   "Win32_System_ProcessStatus",
   "Win32_UI_Shell_PropertiesSystem",
   "Win32_Devices_FunctionDiscovery",

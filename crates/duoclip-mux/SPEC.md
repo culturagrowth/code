@@ -76,3 +76,30 @@ environment (`/usr/bin/ffmpeg` with libx264 and aac).
 5. Unit tests: annexb parsing edge cases (3/4-byte codes, emulation-prevention bytes left intact, garbage), avcC layout, box size fields, and
    timestamp rounding without drift over 1 hour of 60 fps samples.
 - `cargo clippy -p duoclip-mux --all-targets -- -D warnings` is clean and `cargo fmt` is applied. Tests run in < 15 s.
+
+## Implementation notes (accepted deviations / additions)
+
+- `annexb::nal_units` returns the concrete iterator `annexb::NalUnits<'_>` (implements `Iterator<Item = &[u8]>`, `Clone`, `Debug`).
+  Bytes before the first start code are skipped; empty NAL units are skipped. Additive helpers: `annexb::nal_type` and `NAL_*` constants.
+- `avcc_record` writes the `chroma_format`/`bit_depth_*` extension for the High profiles that carry `chroma_format_idc`
+  (100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135), parsed from the SPS (error if the SPS is truncated there).
+- Samples stored by both writers drop AUD and filler NALs and the SPS/PPS identical to the `avcC` ones; a *changed* SPS/PPS stays in band.
+  A video packet with no NAL left, or an empty audio packet, is `InvalidInput`.
+- MP4 `track_ID` = position in `MuxConfig::tracks` + 1 (DuoClip `TrackId(0)` is legal). Track ids must be unique, video width/height and
+  audio rate/channels non-zero, ASC 1..=1024 bytes, otherwise `InvalidInput`. Audio tracks share `alternate_group` 1, all tracks are enabled.
+- Timing: dts drives the decode timeline (non-decreasing per track, also across fragments, else `Timestamp`); `pts - dts` becomes a
+  composition offset (`trun` flag 0x800 / `ctts` v1) if ever non-zero. The last sample of a run uses `duration_ns` (absolute end converted,
+  so still drift-free); when `duration_ns <= 0` it reuses the previous sample's duration. In fragmented files `tfdt` is the absolute converted
+  dts of the fragment's first sample, so a slightly wrong `duration_ns` never shifts later fragments.
+- `FragmentedWriter`: `new` writes nothing; the init segment goes out with the first non-empty fragment (or in `finish` for audio-only configs;
+  `finish` with H.264 tracks and no init is `NoParameterSets`). A fragment is fully validated before any byte is written; an I/O error
+  poisons the writer (later calls return `InvalidInput`). Every fragment ends with `flush()` (no fsync: use `get_ref()`). `mfra` (`tfra` v1
+  per track with the first sync sample of each fragment, `mfro`) is written by `finish`; offsets assume the writer starts at file offset 0.
+  `mvhd`/`tkhd`/`mdhd` durations are 0 (unknown); no `mehd`. Additive API: `get_ref`, `bytes_written`, `fragments_written`.
+- `write_progressive`: `trim_start_ns` is an **absolute** local ns (same clock as `pts_ns`), must be `>= base_ns` (`Timestamp`) and before the
+  end of the clip (`InvalidInput`). Edit lists are also written when a track starts after the movie start (empty edit, e.g. audio a few ms
+  after the first keyframe), so A/V offsets survive. Configured tracks without packets are omitted. `stss` is omitted when every sample is a
+  sync sample (audio), which means "all sync" per ISO 14496-12. Chunks interleave tracks every 500 ms of decode time. Movie timescale 1000.
+- Additive API: `TrackSpec::{track, timescale, is_video}`, `VIDEO_TIMESCALE`, `MOVIE_TIMESCALE`, re-exports of `Packet`, `SharedPacket`, `TrackId`.
+- ffprobe quirk (not a file bug): for fragmented files whose audio starts after 0, ffmpeg reports the audio stream "duration" as its end time,
+  so the format duration looks longer by the start offset. Progressive files report it correctly.
