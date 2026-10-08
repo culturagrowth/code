@@ -295,7 +295,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 **Entrega do GPT em 08/10/2026 — tarefa 10, aguardando revisão do Claude:**
 
 - Branch local `gpt/worker-presenca`, criada da integração `41fac5f`, em worktree separado:
-  `C:\Users\bolad\Projetos\duoclip-gpt-worker-presenca`. As alterações do Claude no diretório principal foram preservadas.
+  `C:\Users\bolad\Projetos\duoclip\worktrees\gpt-worker-presenca`. As alterações do Claude no diretório principal foram preservadas.
 - Worker: `POST /v1/presence` autenticado e `GET /v1/crews/:crew/presence` restrito a membros; migração
   `0003_presence.sql`, com um anúncio por dispositivo, independente da quantidade de grupos.
 - Contrato detalhado em `worker/SPEC.md`: validade de 30 s pelo recebimento no Worker, heartbeat sugerido a cada 10 s,
