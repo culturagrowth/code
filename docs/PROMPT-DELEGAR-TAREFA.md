@@ -61,7 +61,8 @@ Para cada achado, mostre um cenário concreto que falha.
 
 ## Entrega
 Crie docs/revisoes/<tarefa>.md na própria branch revisada (commit em português, só esse arquivo) no formato de docs/revisoes/README.md,
-com um veredito no fim: aprovado / aprovado com ressalvas / mudanças necessárias. Atualize o status em docs/TAREFAS.md.
+com um veredito no fim: aprovado / aprovado com ressalvas / mudanças necessárias. Se o código já está na integração (sem branch própria),
+crie a branch `gpt/revisao-<tarefa>` só com o arquivo de revisão. Atualize o status em docs/TAREFAS.md direto na branch de integração.
 ````
 
 ## Boas tarefas para delegar
