@@ -27,6 +27,7 @@ import { generateInviteCode, INVITE_TTL_MS, INVITE_USES } from "./invite.js";
 import { isUuid, manifestKey, objectKey } from "./keys.js";
 import type { Quality } from "./keys.js";
 import { PRESIGN_EXPIRES_S, UPLOAD_CONTENT_TYPE } from "./presign.js";
+import { PRESENCE_TTL_MS } from "./presence.js";
 import type { PresignMethod } from "./presign.js";
 import {
   additionalBytes,
@@ -45,6 +46,7 @@ import {
   parseDeviceRegistration,
   parseDownloadRequest,
   parseJoin,
+  parsePresence,
   parseUploadRequest,
 } from "./validate.js";
 
@@ -132,6 +134,29 @@ function dailyLimit(code: string, message: string, nowMs: number): HttpError {
 // ---------------------------------------------------------------------------------------------
 
 const health: Handler = () => Promise.resolve(jsonResponse(200, { ok: true }));
+
+const heartbeat: Handler = async ({ app, body, deviceId }) => {
+  const input = parsePresence(parseJsonObject(body));
+  if (input.active_crew !== null) {
+    await requireMember(app, input.active_crew, deviceId);
+  }
+  const now = app.now();
+  const seenAt = await app.db.updatePresence(deviceId, input, now, PRESENCE_TTL_MS);
+  if (seenAt === null) {
+    throw new HttpError(409, "stale_presence", "seq must increase while the previous presence is fresh");
+  }
+  return jsonResponse(200, { ok: true, seen_at_ms: seenAt, expires_at: seenAt + PRESENCE_TTL_MS });
+};
+
+const listPresence: Handler = async ({ app, deviceId, params }) => {
+  const crewId = requireUuidParam(params[0], "crew id");
+  await requireMember(app, crewId, deviceId);
+  const rows = await app.db.listPresence(crewId, app.now(), PRESENCE_TTL_MS);
+  return jsonResponse(200, rows.map((row) => ({
+    ...row,
+    expires_at: row.seen_at_ms + PRESENCE_TTL_MS,
+  })));
+};
 
 const registerDevice: Handler = async ({ app, body }) => {
   const input = parseDeviceRegistration(parseJsonObject(body));
@@ -487,6 +512,7 @@ const deleteClip: Handler = async ({ app, deviceId, params }) => {
 const ROUTES: readonly Route[] = [
   { method: "GET", segments: ["v1", "health"], auth: false, handler: health },
   { method: "POST", segments: ["v1", "devices"], auth: false, handler: registerDevice },
+  { method: "POST", segments: ["v1", "presence"], auth: true, handler: heartbeat },
   { method: "POST", segments: ["v1", "crews"], auth: true, handler: createCrew },
   { method: "POST", segments: ["v1", "crews", "join"], auth: true, handler: joinCrew },
   {
@@ -500,6 +526,12 @@ const ROUTES: readonly Route[] = [
     segments: ["v1", "crews", ":crew", "members"],
     auth: true,
     handler: listMembers,
+  },
+  {
+    method: "GET",
+    segments: ["v1", "crews", ":crew", "presence"],
+    auth: true,
+    handler: listPresence,
   },
   { method: "POST", segments: ["v1", "clips"], auth: true, handler: registerClip },
   {

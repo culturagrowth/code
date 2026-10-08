@@ -14,6 +14,7 @@
 
 import type { App } from "./app.js";
 import { PRESIGN_EXPIRES_S } from "./presign.js";
+import { PRESENCE_TTL_MS } from "./presence.js";
 import { utcDay } from "./quota.js";
 import { deleteClipObjects } from "./store.js";
 import type { ObjectStore } from "./store.js";
@@ -25,7 +26,7 @@ export const SWEEP_MAX_CLIPS = 20;
 
 /**
  * Most R2 calls (list + delete) one run makes. The free Workers plan allows 50 subrequests per
- * invocation, D1 queries included; the sweep itself needs about 6 D1 calls, so 40 keeps a safe
+ * invocation, D1 queries included; the sweep itself needs at most 8 D1 calls, so 40 keeps a safe
  * margin. A clip normally costs 2 calls. When the budget runs out the remaining clips (or the
  * rest of a very large one) wait for the next run, with their rows still in place. On a paid
  * plan this can be raised.
@@ -56,6 +57,7 @@ export interface SweepStats {
   invites_purged: number;
   usage_rows_purged: number;
   counter_rows_purged: number;
+  presence_rows_purged: number;
 }
 
 /** Runs one sweep and logs a one-line JSON summary. */
@@ -72,6 +74,7 @@ export async function runSweep(app: Pick<App, "db" | "store" | "now">): Promise<
     invites_purged: 0,
     usage_rows_purged: 0,
     counter_rows_purged: 0,
+    presence_rows_purged: 0,
   };
 
   // Counts every R2 call, also the ones that throw, so the budget cannot be overrun.
@@ -128,6 +131,7 @@ export async function runSweep(app: Pick<App, "db" | "store" | "now">): Promise<
   const retentionDay = utcDay(now - USAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   stats.usage_rows_purged = await app.db.purgeUsage(retentionDay);
   stats.counter_rows_purged = await app.db.purgeCounters(retentionDay);
+  stats.presence_rows_purged = await app.db.purgePresence(now - PRESENCE_TTL_MS);
 
   console.log(JSON.stringify({ event: "sweep", ...stats }));
   return stats;

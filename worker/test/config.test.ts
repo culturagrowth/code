@@ -41,7 +41,7 @@ describe("project configuration (SPEC layout)", () => {
     const tables = d1
       .query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .map((row) => row.name);
-    for (const table of ["devices", "crews", "crew_members", "invites", "clips", "usage", "seen_signatures", "counters"]) {
+    for (const table of ["devices", "crews", "crew_members", "invites", "clips", "usage", "seen_signatures", "counters", "device_presence"]) {
       expect(tables).toContain(table);
     }
     const columns = (table: string) =>
@@ -58,7 +58,7 @@ describe("project configuration (SPEC layout)", () => {
 
   it("migrations are numbered, append-only SQL files applied in order", () => {
     const files = readdirSync(join(root, "migrations")).sort();
-    expect(files).toEqual(["0001_init.sql", "0002_abuse_limits.sql"]);
+    expect(files).toEqual(["0001_init.sql", "0002_abuse_limits.sql", "0003_presence.sql"]);
   });
 
   it("wrangler.toml documents the optional limit variables (commented out: the defaults apply)", () => {
