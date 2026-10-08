@@ -304,9 +304,12 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 - `npm run test:r2 -- --env-file <arquivo>` usa o presigner real, um objeto sintético cifrado com UUIDs novos, valida
   PUT/GET, tamanho assinado e exclusão do objeto. Há nove testes locais cobrindo também falhas de rede, limpeza e sigilo da saída.
   Nesta branch: 321 testes Worker, typecheck, formatação, Clippy, 374 testes Rust (4 ignorados) e check Windows GNU passaram.
-- **R2 real ainda não validado:** duas tentativas foram bloqueadas antes da primeira resposta HTTP com `EACCES`.
-  Nenhum objeto foi criado. A tarefa 13 aguarda o usuário executar o comando no terminal habitual e compartilhar apenas o resultado.
-  Nenhum deploy, migração remota ou validação remota de D1 foi realizado. S3 não substitui a autenticação administrativa do Wrangler.
+- **R2 real validado pelo usuário em 08/10/2026:** o resultado compartilhado confirmou ausência inicial (404), upload (200),
+  download íntegro (200), tamanho incorreto rejeitado (403), exclusão (204) e ausência final (404), com `cleanup: "done"`.
+  As tentativas anteriores do GPT foram bloqueadas pelo sandbox com `EACCES`; a execução remota foi feita pelo usuário.
+  A tarefa 13 está em revisão pelo Claude; evidência em [`worker/R2-VALIDACAO.md`](../worker/R2-VALIDACAO.md), commit `e6ff0c8`.
+  O Wrangler local informou ausência de autenticação. Nenhum deploy, migração remota ou validação remota de D1 foi realizado.
+  S3 não substitui a autenticação administrativa do Wrangler; o próximo passo é login e consulta do D1 no terminal habitual.
 - As branches locais continuam separadas; a configuração R2 não contém o código de presença, que será integrado após revisão.
   O ambiente também não conseguiu conectar ao GitHub para publicar as entregas.
 
@@ -353,7 +356,8 @@ Os diagnósticos ficam no crate `crates/duoclip-smoke` (`sysinfo`, `audio_probe`
    ainda não rodou: o usuário pulou a captura de tela.) A máquina de teste tem **HDR no monitor principal e um monitor girado 90°**, e o DDA precisa tratar os dois.
 5. ❌ Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso. (No 26300, `IsBorderRequired` e `GraphicsCaptureAccess` existem.)
 6. ❌ "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame). (O teste SNTP contra `time.cloudflare.com` passou no Windows.)
-7. ❌ Worker contra o R2 de verdade (criar bucket, token S3, D1 e fazer o deploy; ver `worker/README.md`).
+7. 🟡 Cloudflare: ✅ presigner contra R2 real validado pelo usuário em 08/10/2026, com limpeza concluída;
+   ❌ autenticação Wrangler, migrações D1 e Worker publicado ainda pendentes (ver `worker/R2-VALIDACAO.md`).
 8. Opcional: teste "caixa-preta" do Medal 2026 (`tasklist /m medal-hook64.dll` e os logs em `%AppData%\Medal`).
 
 ## 7. Como retomar em outro ambiente

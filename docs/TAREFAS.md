@@ -25,7 +25,7 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 10 | Worker: presença por grupo (`POST /v1/presence` com heartbeat e `GET /v1/crews/:crew/presence`) para alimentar a sessão | C | `worker/` | GPT | Claude | em revisão | `gpt/worker-presenca` | Entrega local `5573717`: 355 testes Worker, TTL de 30 s e isolamento por grupo; push pendente |
 | 11 | `rust-toolchain.toml` para fixar a versão do Rust | — | raiz | — | — | livre | — | Decisão do usuário (lints novos quebram o `-D warnings`) |
 | 12 | Revisão retroativa: crate `duoclip-smoke` e a correção do double free no áudio (commit `32f98ac`) | B1 | só `docs/revisoes/` | — | GPT | em revisão | (já na integração) | Entrou antes da regra de revisão cruzada |
-| 13 | Configurar os bindings R2/D1 e validar upload/download no R2 real | C | `worker/` | GPT | Claude | bloqueada | `gpt/worker-r2` | Configuração e `npm run test:r2` prontos; 321 testes locais; sandbox retorna EACCES antes do acesso remoto; aguarda execução no terminal do usuário |
+| 13 | Configurar os bindings R2/D1 e validar upload/download no R2 real | C | `worker/` | GPT | Claude | em revisão | `gpt/worker-r2` | R2 real validado pelo usuário: seis etapas passaram, limpeza concluída; relatório `e6ff0c8`; 321 testes locais; aguarda Claude. Autenticação Wrangler, D1 remoto e deploy pendentes |
 
 ## Concluídas
 
