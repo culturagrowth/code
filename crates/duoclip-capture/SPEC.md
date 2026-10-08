@@ -351,3 +351,16 @@ BACKGROUND"; only with the user's agreement: anything drawn over the test window
   thread drops the sink.
 - `rotated_monitor_report`, `hdr_monitor_report`: print `REPORT:` lines (upright pattern on the rotated monitor; scRGB level of
   the white block vs SDR white / 80) and never fail on a mismatch.
+
+### Hardware run after the CAP fixes (author, 2026-10-08, with the user's authorization)
+
+- Run **one test per process** (`cargo test -p duoclip-capture --test capture_hw -- --ignored --nocapture --exact <name>`): in a single
+  process only the first test obtained the foreground; Windows' foreground lock then refused `SetForegroundWindow` to the later test windows,
+  and the strict tests failed as designed (no privacy-unsafe knob was used). Each test in its own process obtained the foreground.
+- Results, strict mode (safe default options): `identity_monitor_capture_rate_pixels_and_qpc` 538 game frames in 3.08 s (174.4 fps),
+  Rgba16Float, QPC span 2.998 s; `minimize_gives_placeholders_and_restore_gives_game` 128 game → 39 placeholders / 0 game while minimized →
+  102 game; `focus_loss_without_minimize_holds_then_placeholders` 143 game → **0 game frames after the focus moved to the magenta window**,
+  0 placeholders inside the grace, 47 held images, 60 placeholders after the grace → 163 game after resume, pattern correct (no magenta);
+  `rotated_monitor_report` 357 upright frames, pattern correct; `hdr_monitor_report` Rgba16Float, white = 3.0 scRGB (SDR white 240 nits);
+  `end_to_end_capture_encode_mux_mp4` h264 1280x720, 181 frames, 3.0167 s; `outputs_and_adapter_luid_without_capture` and
+  `identity_mismatch_rejected_without_capture` (start with a mismatching pid → `WindowNotFound`) pass. These are author's results, not reviewer verification.
