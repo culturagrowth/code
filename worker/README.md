@@ -444,6 +444,41 @@ ao R2 (`SWEEP_STORE_CALL_BUDGET`) e olha no máximo 20 clipes. O que não coube 
 esvaziado só em parte, `clips_incomplete`) fica com a linha intacta para a próxima hora. No plano pago esses números
 podem ser aumentados em `src/sweep.ts`.
 
+## Testar o fluxo de dois amigos
+
+Com o Worker local aberto, este comando verifica cadastro, grupo, convite e presença de dois participantes:
+
+```sh
+# Terminal 1, dentro de worker/: preparar o D1 local e iniciar o Worker
+npx wrangler d1 migrations apply duoclip --local
+npm run dev
+
+# Terminal 2, também dentro de worker/
+npm run test:crew
+```
+
+O teste cria dois dispositivos com chaves temporárias em memória, cria um grupo, gera e aceita o convite e verifica que os dois
+recebem o retrato completo da presença. Ao terminar, anuncia ambos como ociosos. Não captura tela/áudio, não acessa o R2 e não
+precisa de `.dev.vars`. Usa `cs2` e tempos sintéticos apenas como dados de teste, sem abrir jogo ou substituir o AppClock do app.
+
+A saída JSON mostra cada etapa e seu status HTTP. Sucesso: `ok: true`, `cleanup: "idle"`. Falha: `ok: false` e a etapa/código
+em `failure`; o comando retorna código de saída 1. Não imprime chaves, assinaturas ou o código do convite.
+
+Para outra porta local ou para conferir um Worker já publicado, informe sua origem:
+
+```sh
+npm run test:crew -- --url http://127.0.0.1:8788
+npm run test:crew -- --url https://SEU-WORKER.workers.dev
+```
+
+**Cada execução cadastra dois dispositivos e um grupo no D1 escolhido**, que permanecem após o teste; `cleanup: "idle"` significa
+que os dois saíram do jogo, não que esses cadastros foram apagados. Por padrão o destino é exclusivamente localhost; o endereço
+remoto é uma escolha explícita de quem executa. Repetições consomem o limite diário de cadastros. Se houver falha após anunciar
+presença, ela expira em até 90 segundos. As chaves não são salvas, portanto esses dispositivos são somente de diagnóstico.
+
+`npm test` também executa esse fluxo por HTTP em localhost com o roteador real e SQLite em memória, sem serviço externo.
+Isso confere a API de grupo; não prova sincronização, gravação ou troca de clipes entre dois PCs.
+
 ## Segurança e limitações conhecidas
 
 - **Conteúdo:** o Worker só vê nomes de objetos e tamanhos informados. Os blocos e o `manifest.bin` chegam cifrados dos
