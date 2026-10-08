@@ -56,10 +56,18 @@ O usuário divide tarefas entre o Claude e o GPT. Para não haver conflito:
 3. **Escopo por pasta.** Cada tarefa diz quais pastas pode alterar (normalmente um crate ou o `worker/`). Fora delas, só leitura.
    Mudanças em arquivos compartilhados (`Cargo.toml` da raiz, `Cargo.lock`, `AGENTS.md`, `docs/MEMORIA-DO-PROJETO.md`) ficam no fim da
    tarefa, em commit separado, para facilitar o merge.
-4. **Entrega:** checagens passando, `docs/TAREFAS.md` atualizado (status, branch, resumo), notas no SPEC e, se houve decisão, na memória.
-   Mensagens de commit em português. O merge na branch de integração é feito por quem o usuário indicar (por padrão, o Claude), depois de
-   revisar a entrega da outra IA.
-5. **Revisão cruzada:** sempre que possível, o código de uma IA é revisado pela outra antes do merge.
+4. **Entrega:** checagens passando, `docs/TAREFAS.md` atualizado (status `em revisão`, branch, resumo), notas no SPEC e, se houve decisão,
+   na memória. Mensagens de commit em português. A branch fica esperando a revisão da outra IA.
+5. **Revisão cruzada obrigatória (decisão do usuário):** **quem implementa não revisa o próprio trabalho.** O GPT revisa o que o Claude
+   fez, e o Claude revisa o que o GPT fez. Não use subagentes da mesma IA como "revisão": isso não substitui a revisão da outra.
+   - O revisor lê o SPEC e o diff da branch (`git diff <integração>...<branch>`), roda todas as checagens e procura bugs de verdade
+     (correção, segurança, `unsafe`, pânico com entrada não confiável, desvios do SPEC, testes fracos).
+   - O resultado vai em `docs/revisoes/<tarefa>.md`: cada achado com gravidade (crítico, importante, menor), arquivo e linha, cenário
+     que falha e sugestão. No fim, um veredito: **aprovado**, **aprovado com ressalvas** ou **mudanças necessárias**.
+   - O revisor **não corrige** o código da outra IA (só em ajustes triviais, se o dono pedir). Quem implementou corrige na própria branch e
+     responde cada achado no mesmo arquivo de revisão.
+   - Com o veredito "aprovado", o merge na branch de integração é feito pelo Claude (que roda no PC do usuário), ou por quem o usuário indicar.
+     O que depende de hardware (GPU, áudio, captura) e que o revisor não puder executar é marcado como "não verificado" na revisão.
 
 ## Decisões que não devem ser revertidas sem falar com o usuário
 

@@ -49,6 +49,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 | 15 | "Crie também um prompt para eu mandar para o meu Claude Code no CLI para puxar tudo e realizar o teste do app" | [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](PROMPT-CLAUDE-CODE-LOCAL.md) |
 | 16 | "Quero que funcione com quantos amigos eu quiser jogando junto; tenho 2 grupos diferentes, jogo com um num dia e com o outro no outro; às vezes 6, às vezes 3; sem um interferir no outro" | **Grupos e sessões** (4.7): vários grupos isolados, **sessão automática** e sessões de **até 8 pessoas** |
 | 17 | "Tenho outra IA (GPT 6.1 SOL) e quero delegar tarefas para ela também; deixe tudo adaptável para usar as duas" | Regras neutras em [`AGENTS.md`](../AGENTS.md) (o `CLAUDE.md` importa); quadro [`docs/TAREFAS.md`](TAREFAS.md) com dono e branch por tarefa (`claude/…`, `gpt/…`); modelo [`docs/PROMPT-DELEGAR-TAREFA.md`](PROMPT-DELEGAR-TAREFA.md); revisão cruzada antes do merge |
+| 18 | "Já que vamos usar 2 IAs, melhor uma revisar o que a outra fez: você revisa o GPT e o GPT revisa você, em vez de você fazer, revisar e depois mandar pra ele" | **Revisão cruzada obrigatória**: quem implementa não revisa (nem com subagentes da mesma IA). Revisões em [`docs/revisoes/`](revisoes/), branch por tarefa até o veredito "aprovado" |
 
 ## 3. Preferências do usuário
 
