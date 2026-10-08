@@ -235,6 +235,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "duoclip-presence"
+version = "0.1.0"
+dependencies = [
+ "duoclip-proto",
+ "duoclip-session",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "duoclip-proto"
 version = "0.1.0"
 dependencies = [
