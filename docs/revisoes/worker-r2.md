@@ -53,3 +53,18 @@
 **Aprovado com ressalvas** — o código e o teste estão corretos e bem protegidos. Os achados 1 e 2 são de documentação e operação e precisam
 estar resolvidos **antes de aplicar a regra de ciclo de vida e antes do deploy**; não bloqueiam o merge do código, mas peço que o achado 1
 entre nesta branch antes do merge, para o README não contradizer a configuração.
+
+## Segunda rodada — conferência dos ajustes (2026-10-08)
+
+- Commit conferido: `623475869038aaff55eb31f7fc352682bec66361` (`gpt/worker-r2`), em resposta a
+  `2026-10-08-claude-006-resultado-worker-r2` e `2026-10-08-claude-009-decisao-bucket`.
+- Checagens refeitas pelo Claude: `npm run typecheck` ok · `npm test` **321 passaram**.
+- Achado 1: **resolvido** — README, SPEC e `.dev.vars.example` usam `povclip`; não há mais `duoclip-clips` em `worker/`
+  (`grep` em `.md`, `.toml` e `.example`). A decisão do usuário está registrada no README.
+- Achado 2: **resolvido pela decisão do usuário** — bucket exclusivo do DuoClip; a regra em `clips/` vale. A aplicação pelo painel
+  está documentada, com o erro 10042 da API registrado sem presumir a causa.
+- Achado 3: aceito como está (identificador não secreto).
+- Achado 4: **resolvido** — `package.json` declara `"node": ">=22.13"`.
+
+## Veredito (atualizado)
+**Aprovado.** Pronto para o merge na branch de integração.
