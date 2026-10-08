@@ -151,6 +151,7 @@ export function parseCreateCrew(body: JsonObject): string {
 export interface PresenceInput {
   game: string | null;
   active_crew: string | null;
+  seated_since_ms: number | null;
   seq: number;
   online_since_ms: number;
 }
@@ -178,6 +179,7 @@ export function parsePresence(body: JsonObject): PresenceInput {
   return {
     game,
     active_crew: activeCrew,
+    seated_since_ms: body["seated_since_ms"] === null ? null : nonnegativeInteger("seated_since_ms"),
     seq: nonnegativeInteger("seq"),
     online_since_ms: nonnegativeInteger("online_since_ms"),
   };

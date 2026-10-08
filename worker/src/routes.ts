@@ -27,7 +27,7 @@ import { generateInviteCode, INVITE_TTL_MS, INVITE_USES } from "./invite.js";
 import { isUuid, manifestKey, objectKey } from "./keys.js";
 import type { Quality } from "./keys.js";
 import { PRESIGN_EXPIRES_S, UPLOAD_CONTENT_TYPE } from "./presign.js";
-import { PRESENCE_TTL_MS } from "./presence.js";
+import { PRESENCE_HEARTBEAT_MS, PRESENCE_TTL_MS } from "./presence.js";
 import type { PresignMethod } from "./presign.js";
 import {
   additionalBytes,
@@ -143,9 +143,22 @@ const heartbeat: Handler = async ({ app, body, deviceId }) => {
   const now = app.now();
   const seenAt = await app.db.updatePresence(deviceId, input, now, PRESENCE_TTL_MS);
   if (seenAt === null) {
-    throw new HttpError(409, "stale_presence", "seq must increase while the previous presence is fresh");
+    throw new HttpError(409, "stale_presence", "the run/sequence pair must increase while the previous presence is fresh");
   }
-  return jsonResponse(200, { ok: true, seen_at_ms: seenAt, expires_at: seenAt + PRESENCE_TTL_MS });
+  const crews = (await app.db.listCrewPresence(deviceId, now, PRESENCE_TTL_MS)).map((snapshot) => ({
+    crew_id: snapshot.crew_id,
+    members: snapshot.members.map((row) => ({
+      ...row,
+      expires_at: row.seen_at_ms + PRESENCE_TTL_MS,
+    })),
+  }));
+  return jsonResponse(200, {
+    ok: true,
+    seen_at_ms: seenAt,
+    expires_at: seenAt + PRESENCE_TTL_MS,
+    heartbeat_interval_ms: PRESENCE_HEARTBEAT_MS,
+    crews,
+  });
 };
 
 const listPresence: Handler = async ({ app, deviceId, params }) => {

@@ -81,7 +81,8 @@ As migrações ficam em `migrations/` e são aplicadas em ordem:
 
 - `0001_init.sql` cria `devices`, `crews`, `crew_members`, `invites`, `clips`, `clip_chunks`, `usage` e `seen_signatures`;
 - `0002_abuse_limits.sql` cria `counters` (contadores diários atômicos dos limites contra abuso) e dois índices.
-- `0003_presence.sql` cria `device_presence` (um anúncio atual por dispositivo) e o índice de expiração.
+- `0003_presence.sql` cria `device_presence` (um anúncio atual por dispositivo, incluindo o horário do lugar na sessão).
+  A tabela não usa índice de expiração, para reduzir as gravações de cada heartbeat.
 
 Rode o mesmo comando depois de qualquer migração nova (inclusive ao atualizar o Worker).
 
@@ -250,8 +251,8 @@ Regras:
 | `POST /v1/crews/:crew/invites` | membro | | `201 {code, expires_at}`; código de 10 caracteres `[A-Z2-9]`, válido por 24 h, 5 usos; `409 invite_limit` com 10 convites válidos ao mesmo tempo |
 | `POST /v1/crews/join` | qualquer dispositivo | `{code}` | `200 {crew_id}`; `404 invalid_invite` se for inválido, vencido ou sem usos; `429 too_many_attempts` depois de 20 tentativas falhas no dia |
 | `GET /v1/crews/:crew/members` | membro | | `[{device_id, display_name}]` |
-| `POST /v1/presence` | qualquer dispositivo | `{game, active_crew, seq, online_since_ms}` | `200 {ok:true, seen_at_ms, expires_at}`; `409 stale_presence` para sequência repetida ou antiga enquanto o anúncio estiver válido |
-| `GET /v1/crews/:crew/presence` | membro | | `[{device_id, display_name, game, active_crew, seq, online_since_ms, seen_at_ms, expires_at}]` |
+| `POST /v1/presence` | qualquer dispositivo | `{game, active_crew, seated_since_ms, seq, online_since_ms}` | `200 {ok:true, seen_at_ms, expires_at, heartbeat_interval_ms, crews:[{crew_id,members:[]}]}`; `409 stale_presence` para execução/sequência repetida ou antiga enquanto o anúncio estiver válido |
+| `GET /v1/crews/:crew/presence` | membro | | `[{device_id, display_name, game, active_crew, seated_since_ms, seq, online_since_ms, seen_at_ms, expires_at}]` |
 | `POST /v1/clips` | membro da crew | `{clip_id, crew_id, ttl_s?}` | `201` ou `200` (idempotente para o mesmo dono) com `{clip_id, expires_at}`; `429 clip_registration_limited` depois de 200 clipes novos no dia |
 | `POST /v1/clips/:clip/upload-urls` | membro, e `pov` = quem chama | `{pov, quality, indices[], sizes[], manifest?, manifest_size?}` | URLs PUT, veja abaixo |
 | `POST /v1/clips/:clip/download-urls` | membro | `{pov, quality, indices[], manifest?}` | URLs GET, veja abaixo |
@@ -275,27 +276,37 @@ Detalhes:
 
 #### Presença e sessão automática
 
-Envie um heartbeat assinado a cada **10 segundos**, incrementando `seq` em cada anúncio:
+Envie um heartbeat assinado a cada **30 segundos**, incrementando `seq` em cada anúncio, e também quando mudar de jogo,
+compromisso de grupo ou lugar na sessão:
 
 ```json
 {
   "game": "cs2",
   "active_crew": null,
+  "seated_since_ms": null,
   "seq": 1,
   "online_since_ms": 12000
 }
 ```
 
-Os quatro campos são obrigatórios. `game` é o id do banco de jogos (até 64 bytes UTF-8, sem caracteres de controle)
+Os cinco campos são obrigatórios. `game` é o id do banco de jogos (até 64 bytes UTF-8, sem caracteres de controle)
 ou `null` quando não houver jogo. `active_crew` é `null` enquanto nenhum grupo foi escolhido, ou o UUID de um grupo
-do dispositivo. `seq` e `online_since_ms` são inteiros de 0 a 9007199254740991; este último vem do relógio monotônico
-local e permanece estável durante a execução do app. A identidade vem da assinatura; o corpo não escolhe outro dispositivo.
+do dispositivo. `seq` e os horários são inteiros de 0 a 9007199254740991. `online_since_ms` e `seated_since_ms` vêm do
+**relógio global DuoClip (AppClock, em milissegundos)**, permitindo comparação entre PCs. O primeiro permanece estável
+durante a execução do app; o segundo é `null` sem lugar ou o horário em que o dispositivo ocupou um lugar.
+A identidade vem da assinatura; o corpo não escolhe outro dispositivo.
 
-O Worker registra o horário de **recebimento**, e o anúncio vale por **30 segundos**, incluindo o instante exato
-de `expires_at`. Uma sequência repetida ou menor recebe `409 stale_presence` e não renova a validade. Depois de expirar,
-uma sequência reiniciada é aceita; reiniciar o app pode exigir esperar até 30 segundos pelo anúncio anterior.
+O Worker registra o horário de **recebimento**, e o anúncio vale por **90 segundos**, incluindo o instante exato
+de `expires_at`. Ele aceita apenas um par `(online_since_ms, seq)` mais novo enquanto a linha estiver válida:
+uma nova execução com horário maior pode reiniciar a sequência imediatamente. Pacotes atrasados da execução anterior
+ou sequência repetida/menor na mesma execução recebem `409 stale_presence` e não renovam a validade.
+Depois de expirar, qualquer par válido é aceito; um relógio reiniciado que volte no tempo pode exigir esperar até 90 segundos.
 
-Consulte `GET /v1/crews/:crew/presence` para obter os membros disponíveis, ordenados pelo id. O resultado inclui o
+O próprio POST devolve `heartbeat_interval_ms: 30000` e `crews`, com um retrato completo de cada grupo atual do chamador,
+ordenado por id do grupo. Grupos sem membros disponíveis aparecem com `members: []`; sem associação, `crews` é vazio.
+Todos os retratos são obtidos em uma única consulta SQL, preservando o custo de consultas mesmo com muitos grupos.
+Use esses retratos na rotina normal. O `GET /v1/crews/:crew/presence` continua disponível para consultas explícitas.
+Os membros são ordenados pelo id. O resultado inclui o
 próprio dispositivo, membros sem jogo e membros em jogos diferentes. O cliente escolhe os que estão no mesmo jogo
 e limita a sessão a oito pessoas; a consulta pode retornar mais de oito membros.
 
@@ -303,10 +314,18 @@ Há um único anúncio por dispositivo para todos os seus grupos. Ao escolher um
 desaparece das consultas dos demais grupos. Assim um grupo não recebe o id de outro grupo nem os seus participantes.
 Clientes de fora do grupo recebem `403 not_a_member`; grupos de um `active_crew` sem associação também são recusados.
 
-Cada consulta é um retrato completo: remova os membros que sumiram. Para integrar ao `duoclip-session`, não renove a
-presença local quando a sequência não mudou, e não use `seen_at_ms` remoto como relógio monotônico local. O adapter
+Cada resultado, por POST ou GET, é um retrato completo: remova os membros que sumiram. Para integrar ao `duoclip-session`,
+configure `presence_ttl_ms = 90000`, não renove a presença local quando o par de execução/sequência não mudou,
+e use o horário local de recebimento para a validade, preservando os horários AppClock anunciados para ordenar lugares. O adapter
 do cliente ainda precisa ligar essas respostas ao gerenciador de sessão. A expiração já é aplicada pela consulta;
 a varredura horária apenas remove as linhas antigas do banco.
+
+O orçamento conservador do SPEC considera até 8 linhas gravadas por heartbeat, incluindo a limpeza futura do anti-replay.
+Com 8 dispositivos e um POST a cada 30 segundos, são cerca de 7680 linhas/hora (92160 em 12 horas), antes das demais operações.
+O plano grátis permite atualmente 100000 linhas gravadas/dia, compartilhadas com cadastro, clipes, mudanças imediatas e outras chamadas.
+Não faça GET periódico além dos retratos do POST: isso acrescenta gravações de anti-replay.
+Acompanhe as métricas reais; a estimativa não garante a cobrança, e presença contínua por 24 horas excede esse orçamento.
+Referência: [preços do D1](https://developers.cloudflare.com/d1/platform/pricing/).
 
 #### Resposta de `upload-urls` e `download-urls`
 
