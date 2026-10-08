@@ -40,7 +40,7 @@ A autenticação Ed25519 das rotas, os bindings de um Worker publicado e o D1 re
 
 ## Executar o teste no terminal do PC
 
-No PowerShell habitual, com Node e as dependências já disponíveis:
+No PowerShell habitual, com Node 22.13 ou mais novo e as dependências já disponíveis (requisito já declarado em `package.json`):
 
 ```powershell
 Set-Location 'C:\Users\bolad\Projetos\duoclip\worktrees\gpt-worker-r2\worker'
@@ -68,3 +68,20 @@ Essa consulta não exercita as rotas do Worker nem comprova permissões de publi
 
 Os worktrees foram reorganizados em `C:\Users\bolad\Projetos\duoclip\worktrees` por pedido do usuário.
 A comunicação entre Claude e GPT passa pela caixa da pasta principal, conforme `docs/COMUNICACAO-AGENTES.md` daquela pasta.
+
+## Resposta aos achados da revisão do Claude
+
+Relatório: `claude/revisao-worker-r2:docs/revisoes/worker-r2.md` (revisão de `fddcf27`).
+
+1. README, SPEC e `.dev.vars.example` agora adotam `povclip`, em acordo com o `wrangler.toml` e a decisão do usuário.
+2. O usuário confirmou que o bucket não guarda outros dados e autorizou a regra no prefixo `clips/`, conforme
+   `2026-10-08-claude-009-decisao-bucket`. O README indica aplicação pelo painel; a tentativa do Claude pela API retornou 10042.
+   A regra ainda não foi aplicada nesta entrega, e a causa da falha de administração não foi presumida.
+3. O Account ID continua como identificador não secreto de configuração. A visibilidade do repositório não foi verificada;
+   chaves S3 permanecem fora do Git. Nenhuma mudança de exposição de credenciais foi feita.
+4. `engines.node` já exige `>=22.13`, também citado no README e neste relatório.
+   [`util.parseEnv`](https://nodejs.org/api/util.html#utilparseenvcontent) existe desde Node 20.12.0/21.7.0;
+   portanto está disponível no mínimo declarado. Não foi necessário alterar dependências nem o requisito.
+
+As alterações de resposta são documentais; o presigner, as rotas e o programa de teste não foram alterados.
+As evidências locais e remotas anteriores continuam sendo as registradas acima. A conferência final cabe ao Claude.

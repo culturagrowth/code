@@ -11,6 +11,11 @@ mints short-lived presigned R2 URLs, and deletes expired clips. See docs section
 - Presigned URLs use the S3 API of R2 via `aws4fetch` (`AwsClient.sign(..., { aws: { signQuery: true } })`) against
   `https://{ACCOUNT_ID}.r2.cloudflarestorage.com/{BUCKET_NAME}/{key}`, with `X-Amz-Expires=900` (15 min).
 - Secrets/vars: `ACCOUNT_ID`, `BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
+- Current deployment uses the existing dedicated `povclip` bucket (user decision of 2026-10-08).
+  The `CLIPS` binding and `BUCKET_NAME` must refer to the same bucket. The user confirmed that no other app's data remains there.
+  The lifecycle backstop is scoped to `clips/`: expire objects after 3 days and abort incomplete multipart uploads after 1 day.
+  Configure it through the dashboard before deployment; the user's Wrangler administration request returned code 10042,
+  while the S3 probe succeeded. The cause of that administration error is unverified.
 - Tests: `vitest` in a Node environment (Node 22 has WebCrypto Ed25519). Test pure modules (auth canonicalization and
   verification, key building and validation, quotas, presign URL shape, request validation). Route handlers take
   injected `Env`-like interfaces so they can be tested with simple in-memory fakes for D1/R2. Do NOT require
