@@ -180,6 +180,23 @@ All uuids are lowercase and hyphenated.
 - Real R2 verification requires a successful opt-in run. D1's id in the local file is configuration metadata;
   it does not supply Cloudflare administration authentication or prove that remote migrations have been applied.
 
+## Two-friend diagnostic (task 19)
+
+`npm run test:crew -- [--url ORIGIN]` runs `tools/crew-smoke.ts` against a running Worker (default
+`http://127.0.0.1:8787`). It checks health, registers two fresh devices with in-memory non-extractable Ed25519 private keys,
+creates a crew, creates/redeems an invite, verifies membership, and verifies complete two-peer presence snapshots through
+signed heartbeats. It then announces both devices idle. All signed requests use canonical path/body hashing, increasing
+timestamps to avoid duplicate signatures, a 15-second request timeout, and no redirect following.
+
+The JSON result reports only step names, HTTP statuses, success, idle cleanup and a sanitized failure code; keys, signatures,
+invites and response bodies are never printed. `ok: false` gives CLI exit code 1. HTTP is allowed only for loopback; other
+origins must use HTTPS. No R2 credentials, media capture or deployment is involved. Presence time/game data is synthetic;
+this probe is not the production AppClock or persistent device-identity implementation.
+
+Two devices, one crew and the invite remain in the selected D1 after execution. Cleanup means idle presence, not deletion;
+on early failure presence expires normally after 90 s. Repeated probes consume registration quota. Tests exercise the command's
+flow over real loopback HTTP and the real router/SQLite migrations, plus failed registration and an incomplete membership result.
+
 ## Implementation notes (accepted deviations, Phase A review) — the Rust client MUST follow these
 
 - **Upload URLs sign `Content-Length` and `Content-Type: application/octet-stream`.** The client must PUT exactly the returned
