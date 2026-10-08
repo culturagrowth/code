@@ -34,10 +34,14 @@ npx wrangler login
 
 ## Configuração passo a passo
 
-### 1. Criar o bucket R2
+### 1. Usar o bucket R2 `povclip`
+
+O bucket deste projeto é **`povclip`**, escolhido pelo usuário em 08/10/2026 porque já existia na conta.
+O usuário confirmou que ele é dedicado ao DuoClip e não guarda mais dados de outro uso.
+O `wrangler.toml` já aponta para esse bucket. Em uma conta nova, a criação pode ser feita com:
 
 ```sh
-npx wrangler r2 bucket create duoclip-clips
+npx wrangler r2 bucket create povclip
 ```
 
 **Mantenha o bucket privado:** não habilite o acesso público (domínio `r2.dev` ou domínio personalizado) nem CORS aberto.
@@ -57,7 +61,7 @@ dela, só a assinatura das URLs.
 1. No painel da Cloudflare, abra **R2 → Overview → Manage API tokens** (Gerenciar tokens de API) e clique em
    **Create API token**.
 2. Permissão: **Object Read & Write**.
-3. Em **Specify bucket(s)**, escolha somente `duoclip-clips`. Não use um token de conta inteira.
+3. Em **Specify bucket(s)**, escolha somente `povclip`. Não use um token de conta inteira.
 4. Crie o token e copie, **uma única vez** (o segredo não é mostrado de novo):
    - **Access Key ID** → será o segredo `R2_ACCESS_KEY_ID`;
    - **Secret Access Key** → será o segredo `R2_SECRET_ACCESS_KEY`.
@@ -91,7 +95,7 @@ Variáveis **não secretas** ficam no `wrangler.toml`, em `[vars]`:
 ```toml
 [vars]
 ACCOUNT_ID = "0123456789abcdef0123456789abcdef"   # o seu Account ID
-BUCKET_NAME = "duoclip-clips"
+BUCKET_NAME = "povclip"
 ```
 
 Os dois valores da chave S3 são **segredos** e nunca entram no repositório:
@@ -144,12 +148,18 @@ depois da exclusão ou de um multipart ter ficado pela metade:
 - prefixo `clips/`: **expirar objetos após 3 dias**;
 - prefixo `clips/`: **abortar uploads multipart incompletos após 1 dia**.
 
-Pelo painel: **R2 → duoclip-clips → Settings → Object lifecycle rules → Add rule**. Ou pela linha de comando:
+Neste ambiente, configure as duas ações pelo painel, como etapa de preparação da publicação:
+**R2 → povclip → Settings → Object lifecycle rules → Add rule**. Use o prefixo `clips/` nas duas ações.
+O usuário autorizou essas regras para o bucket dedicado. A consulta do ciclo de vida pelo Wrangler retornou
+`code 10042` (pedido para habilitar R2 pelo painel); não houve alteração do bucket nessa tentativa.
+A causa desse erro ainda não foi verificada, e o teste S3 bem-sucedido não comprova acesso à API de administração do R2.
+
+Quando a API de administração estiver disponível, os comandos equivalentes são:
 
 ```sh
-npx wrangler r2 bucket lifecycle add duoclip-clips expire-clips clips/ --expire-days 3
-npx wrangler r2 bucket lifecycle add duoclip-clips abort-multipart clips/ --abort-multipart-days 1
-npx wrangler r2 bucket lifecycle list duoclip-clips
+npx wrangler r2 bucket lifecycle add povclip expire-clips clips/ --expire-days 3
+npx wrangler r2 bucket lifecycle add povclip abort-multipart clips/ --abort-multipart-days 1
+npx wrangler r2 bucket lifecycle list povclip
 ```
 
 O ciclo de vida do R2 trabalha em dias e roda de forma assíncrona (a remoção pode demorar até cerca de 24 h depois de
@@ -174,6 +184,27 @@ Para testar upload e download de verdade, use um bucket de teste.
 npm run typecheck    # tsc --noEmit (strict)
 npm test             # vitest run, em ambiente Node
 ```
+
+Para verificar o **R2 real**, com suas credenciais em `.dev.vars`, há um teste opcional:
+
+```sh
+npm run test:r2
+```
+
+Em um worktree separado, você pode apontar para o arquivo de credenciais da pasta principal, sem copiá-lo:
+
+```powershell
+npm.cmd run test:r2 -- --env-file "C:\Users\bolad\Projetos\duoclip\worker\.dev.vars"
+```
+
+O teste usa o gerador de URLs do Worker: envia alguns bytes sintéticos cifrados, baixa e compara o conteúdo,
+confere se alterar o tamanho assinado resulta em `403 SignatureDoesNotMatch` e remove o único objeto temporário.
+Ele confirma a remoção com um GET. As chaves do objeto são UUIDs novos; nenhum clipe existente é alterado.
+Se a limpeza falhar, o resultado inclui a chave exata para remoção manual. Credenciais e URLs assinadas não aparecem na saída.
+
+Esse comando precisa de acesso à rede. Um erro `EACCES` do sandbox não valida nem invalida as credenciais; nesse caso,
+rode-o no seu terminal habitual. O banco D1 e o Worker publicado precisam de validação separada; os tokens S3 não
+autenticam o Wrangler para administrar a conta Cloudflare. `npm test` continua usando somente dados sintéticos locais.
 
 Os testes não usam rede nem login do wrangler e rodam em poucos segundos:
 
@@ -361,10 +392,9 @@ podem ser aumentados em `src/sweep.ts`.
   apps; a chave do clipe nunca passa pelo Worker.
 - **Cotas por tamanho assinado:** `Content-Type` e `Content-Length` entram na assinatura das URLs de upload, então cada
   objeto tem exatamente o tamanho cobrado, inclusive o `manifest.bin`. Uma URL de upload sem tamanho nunca é emitida.
-  Isso foi conferido contra uma implementação independente do SigV4 nos testes, mas **não** contra o R2 real (não há
-  credenciais nos testes). Se o R2 recusar o `Content-Length` assinado, o sintoma é `403 SignatureDoesNotMatch` em todo
-  upload; nesse caso a regra de ciclo de vida de 3 dias continua limitando o dano, e a assinatura do tamanho pode ser
-  retirada em `src/presign.ts` (voltando ao risco de um membro enviar mais bytes do que anunciou).
+  Isso foi conferido contra uma implementação independente do SigV4 nos testes locais e no R2 real pelo usuário em
+  08/10/2026: tamanho correto aceito, conteúdo baixado íntegro, tamanho incorreto recusado e objeto temporário removido.
+  A evidência está em [`R2-VALIDACAO.md`](R2-VALIDACAO.md). Os testes automáticos locais continuam sem credenciais.
 - **Cadastro aberto e disjuntores:** `POST /v1/devices` é aberto por projeto, então qualquer pessoa que descubra o
   endereço poderia criar dispositivos e, com eles, cota própria. Os disjuntores (cadastros por dia, bytes por dia no
   serviço todo, crews, convites, clipes) limitam o custo no pior caso. O outro lado da moeda: alguém que consiga

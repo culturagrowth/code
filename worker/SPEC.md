@@ -11,6 +11,11 @@ mints short-lived presigned R2 URLs, and deletes expired clips. See docs section
 - Presigned URLs use the S3 API of R2 via `aws4fetch` (`AwsClient.sign(..., { aws: { signQuery: true } })`) against
   `https://{ACCOUNT_ID}.r2.cloudflarestorage.com/{BUCKET_NAME}/{key}`, with `X-Amz-Expires=900` (15 min).
 - Secrets/vars: `ACCOUNT_ID`, `BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
+- Current deployment uses the existing dedicated `povclip` bucket (user decision of 2026-10-08).
+  The `CLIPS` binding and `BUCKET_NAME` must refer to the same bucket. The user confirmed that no other app's data remains there.
+  The lifecycle backstop is scoped to `clips/`: expire objects after 3 days and abort incomplete multipart uploads after 1 day.
+  Configure it through the dashboard before deployment; the user's Wrangler administration request returned code 10042,
+  while the S3 probe succeeded. The cause of that administration error is unverified.
 - Tests: `vitest` in a Node environment (Node 22 has WebCrypto Ed25519). Test pure modules (auth canonicalization and
   verification, key building and validation, quotas, presign URL shape, request validation). Route handlers take
   injected `Env`-like interfaces so they can be tested with simple in-memory fakes for D1/R2. Do NOT require
@@ -99,6 +104,21 @@ All uuids are lowercase and hyphenated.
 - Routes, using in-memory fakes: membership enforcement (403), the pov ≠ caller upload rejection, invite expiry and uses, and idempotent clip registration.
 - `npm run typecheck` and `npm test` both pass.
 
+### Opt-in real R2 verification (task 13)
+
+- `npm run test:r2 -- [--env-file path/to/.dev.vars]` compiles and runs the existing Worker presigner against real R2.
+  The environment file defaults to the current Worker's `.dev.vars`. This command is separate from offline `npm test`.
+- One fresh random `clips/{crew}/{clip}/{pov}/proxy/000000.bin` key is checked for `404 NoSuchKey`, uploaded with synthetic
+  AES-GCM ciphertext and the exact signed length/type, then downloaded and compared byte-for-byte.
+- Reusing the PUT URL with a different body length must yield `403 SignatureDoesNotMatch`. Cleanup signs a DELETE of
+  this one key only, attempts it even after a lost PUT response, and verifies `404 NoSuchKey` afterwards.
+- Each HTTP request has a 15-second deadline and rejects redirects. No existing clips, bucket settings, D1 data or
+  deployed Workers are modified. Credentials, request headers, signed URLs and raw error bodies are never logged.
+- The JSON result reports steps/statuses, success and cleanup. A failed cleanup includes only the random object key
+  for manual removal. Exit code is nonzero for configuration, network, protocol, data-integrity or cleanup failures.
+- Real R2 verification requires a successful opt-in run. D1's id in the local file is configuration metadata;
+  it does not supply Cloudflare administration authentication or prove that remote migrations have been applied.
+
 ## Implementation notes (accepted deviations, Phase A review) — the Rust client MUST follow these
 
 - **Upload URLs sign `Content-Length` and `Content-Type: application/octet-stream`.** The client must PUT exactly the returned
@@ -116,7 +136,16 @@ All uuids are lowercase and hyphenated.
   - 413 `chunk_too_large`/`clip_quota_exceeded`, 429 `daily_quota_exceeded` with `Retry-After`;
   - 401 with a `reason`.
 - The Ed25519 verification is strict (non-malleable). Invite codes are normalized ASCII-only. The client signs the WHATWG-serialized `pathname + search`.
-- Tests need Node ≥ 22.13 (`node:sqlite`, WebCrypto Ed25519). R2 presigning was validated against an independent SigV4 implementation and
-  `wrangler dev`, **not against real R2** (no credentials yet).
+- Tests need Node ≥ 22.13 (`node:sqlite`, WebCrypto Ed25519). Phase A validated R2 presigning against an independent SigV4 implementation and
+  `wrangler dev`. Task 13 additionally verified PUT/GET, signed-length rejection and cleanup against real R2; see below.
 - Recommended after the friends register: Cloudflare rate-limiting rules on `POST /v1/devices` and `POST /v1/crews/join`, and possibly closing
   registration. Any crew member can delete any clip (per SPEC), and there is no member removal yet.
+
+## Implementation notes (task 13, awaiting cross-review)
+
+- The opt-in probe uses existing dependencies and does not change production routes, quotas or presigning rules.
+  Nine offline tests cover the probe's control flow, exact headers, cleanup, redaction and negative length check.
+- The user ran the real R2 probe successfully on 2026-10-08 and supplied the six expected statuses with cleanup completed.
+  The GPT sandbox's earlier attempts were blocked with `EACCES`. See `R2-VALIDACAO.md` for the user-supplied evidence.
+  Non-secret R2/D1 identifiers are configured. The user subsequently queried the configured D1 successfully with Wrangler;
+  it had zero tables. Worker deployment and remote D1 migrations remain pending.

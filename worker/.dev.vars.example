@@ -1,6 +1,6 @@
 # Copy to .dev.vars for `npm run dev` (wrangler reads it automatically; it is git-ignored).
 # Never commit real values. In production use `wrangler secret put` instead.
 ACCOUNT_ID=00000000000000000000000000000000
-BUCKET_NAME=duoclip-clips
+BUCKET_NAME=povclip
 R2_ACCESS_KEY_ID=replace-me
 R2_SECRET_ACCESS_KEY=replace-me
