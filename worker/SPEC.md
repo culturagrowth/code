@@ -142,4 +142,5 @@ All uuids are lowercase and hyphenated.
   Nine offline tests cover the probe's control flow, exact headers, cleanup, redaction and negative length check.
 - The user ran the real R2 probe successfully on 2026-10-08 and supplied the six expected statuses with cleanup completed.
   The GPT sandbox's earlier attempts were blocked with `EACCES`. See `R2-VALIDACAO.md` for the user-supplied evidence.
-  Non-secret R2/D1 identifiers are configured. Wrangler authentication, Worker deployment and remote D1 migrations remain pending.
+  Non-secret R2/D1 identifiers are configured. The user subsequently queried the configured D1 successfully with Wrangler;
+  it had zero tables. Worker deployment and remote D1 migrations remain pending.

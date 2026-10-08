@@ -11,7 +11,9 @@ Branch: `gpt/worker-r2`. Tarefa 13, implementada pelo GPT, validada no R2 real p
 - As tentativas do GPT foram bloqueadas pelo sandbox com `EACCES` antes da primeira resposta HTTP.
   Depois, o usuário executou o teste no terminal habitual e compartilhou o resultado abaixo: upload e download íntegro,
   rejeição do tamanho incorreto e remoção confirmada passaram no R2 real. A execução remota foi feita pelo usuário.
-- O Wrangler local informou que não há autenticação administrativa. As chaves S3 usadas no teste não autenticam o Wrangler.
+- Depois do login, o usuário consultou o D1 pelo Wrangler: banco `duoclip`, ID igual ao configurado,
+  região `ENAM`, `num_tables = 0` e tamanho `12.3 kB`. Isso confirma acesso de consulta no terminal do usuário.
+  As chaves S3 usadas no teste não substituem a autenticação administrativa do Wrangler.
 - O Worker não foi publicado, e nenhuma migração foi aplicada ao D1 remoto.
 
 ## Evidência fornecida pelo usuário
@@ -41,7 +43,7 @@ A autenticação Ed25519 das rotas, os bindings de um Worker publicado e o D1 re
 No PowerShell habitual, com Node e as dependências já disponíveis:
 
 ```powershell
-Set-Location 'C:\Users\bolad\Projetos\duoclip-gpt-worker-r2\worker'
+Set-Location 'C:\Users\bolad\Projetos\duoclip\worktrees\gpt-worker-r2\worker'
 npm.cmd run test:r2 -- --env-file 'C:\Users\bolad\Projetos\duoclip\worker\.dev.vars'
 ```
 
@@ -53,7 +55,7 @@ Resultado esperado: `ok: true`, `cleanup: "done"`, seis etapas com status `404, 
 Uma falha de limpeza informa `object_key` para remover exatamente esse objeto pelo painel. O processo sai com código diferente de zero em falhas.
 
 A saída omite chaves, cabeçalhos, URLs assinadas e corpos de erro.
-O próximo passo é autenticar o Wrangler no terminal habitual e consultar o D1 configurado:
+O login e a consulta abaixo já foram executados pelo usuário com sucesso em 08/10/2026:
 
 ```powershell
 npx.cmd wrangler login
@@ -61,3 +63,8 @@ npx.cmd wrangler d1 info duoclip
 ```
 
 A aplicação das migrações e a publicação do Worker continuam pendentes.
+O banco consultado não tem tabelas; seu ID é `696b75a4-5499-402d-8076-d20c16f52ac7`, criado em `2026-10-08T15:06:54.018Z`.
+Essa consulta não exercita as rotas do Worker nem comprova permissões de publicação.
+
+Os worktrees foram reorganizados em `C:\Users\bolad\Projetos\duoclip\worktrees` por pedido do usuário.
+A comunicação entre Claude e GPT passa pela caixa da pasta principal, conforme `docs/COMUNICACAO-AGENTES.md` daquela pasta.
