@@ -5,3 +5,4 @@ worker/dist
 *.log
 .DS_Store
 /test-output
+/.claude/

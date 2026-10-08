@@ -196,8 +196,11 @@ dependencies = [
 name = "duoclip-encode"
 version = "0.1.0"
 dependencies = [
+ "duoclip-buffer",
+ "duoclip-mux",
  "thiserror",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

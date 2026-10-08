@@ -2,8 +2,8 @@
 //! H.264 (plus HEVC/AV1 for information) and AAC — with each MFT's name, vendor and adapter LUID,
 //! and checks that each one can be activated. Records nothing.
 //!
-//! The encode test (D3D11 → `duoclip-encode` → `duoclip-mux` → ffprobe) is skipped while
-//! `duoclip-encode` is only a skeleton (see `docs/MEMORIA-DO-PROJETO.md`).
+//! The real encode test (D3D11 → `duoclip-encode` → `duoclip-mux` → ffprobe) lives in
+//! `crates/duoclip-encode/tests/gpu_encode.rs` (`--ignored`); this probe points to it.
 
 #[cfg(not(windows))]
 fn main() {
@@ -66,7 +66,8 @@ mod win {
             MFAudioFormat_AAC,
         );
         println!(
-            "\nTeste de codificação (duoclip-encode + duoclip-mux): PULADO — duoclip-encode ainda é só esqueleto."
+            "\nTeste de codificação real (GPU → NV12 → H.264 + AAC → duoclip-mux → ffprobe):\n  \
+             cargo test -p duoclip-encode --test gpu_encode -- --ignored --nocapture"
         );
         // SAFETY: balanced with MFStartup above.
         unsafe { MFShutdown() }?;

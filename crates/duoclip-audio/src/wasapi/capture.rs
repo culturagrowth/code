@@ -34,7 +34,8 @@ use super::sys::{create_event, os, os_error, qpc_now_100ns, ComApartment, Mmcss,
 use super::{CaptureHandle, ACTIVATION_TIMEOUT};
 use crate::{
     frames_to_100ns, samples_from_ne_bytes, AudioChunk, AudioError, AudioSink, SourceKind,
-    TimestampTracker, BYTES_PER_FRAME, CHANNELS, DEFAULT_MAX_JUMP_100NS, SAMPLE_RATE,
+    TimestampTracker, BYTES_PER_FRAME, CHANNELS, DEFAULT_MAX_JUMP_100NS,
+    PROCESS_LOOPBACK_MAX_JUMP_100NS, SAMPLE_RATE,
 };
 
 /// WASAPI buffer duration requested from `Initialize` (100 ns units): 200 ms.
@@ -55,6 +56,17 @@ pub(crate) enum StreamKind {
     EndpointLoopback,
     /// The default communications capture endpoint.
     Microphone,
+}
+
+impl StreamKind {
+    /// Timestamp-jump tolerance (100 ns) for this stream. Process loopback positions are
+    /// synthetic exact steps, so a much tighter threshold applies than for real device clocks.
+    fn max_jump_100ns(self) -> i64 {
+        match self {
+            Self::ProcessLoopback { .. } => PROCESS_LOOPBACK_MAX_JUMP_100NS,
+            Self::EndpointLoopback | Self::Microphone => DEFAULT_MAX_JUMP_100NS,
+        }
+    }
 }
 
 /// A failed start: the error, and the sink back when the capture thread could return it.
@@ -144,7 +156,7 @@ fn capture_thread(
     }
     drop(ready);
 
-    let result = stream.run(source, sink.as_mut(), stop);
+    let result = stream.run(source, kind.max_jump_100ns(), sink.as_mut(), stop);
     stream.stop();
     if let Err(err) = result {
         sink.on_error(source, err);
@@ -213,10 +225,11 @@ impl Stream {
     fn run(
         &self,
         source: SourceKind,
+        max_jump_100ns: i64,
         sink: &mut dyn AudioSink,
         stop: &AtomicBool,
     ) -> Result<(), AudioError> {
-        let mut tracker = TimestampTracker::new(DEFAULT_MAX_JUMP_100NS);
+        let mut tracker = TimestampTracker::new(max_jump_100ns);
         while !stop.load(Ordering::Acquire) {
             // SAFETY: `self.event` is a valid event handle for the lifetime of `self`.
             let wait = unsafe { WaitForSingleObject(*self.event, WAIT_MS) };

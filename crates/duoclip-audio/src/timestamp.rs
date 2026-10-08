@@ -14,6 +14,12 @@ pub const HNS_PER_SEC: i64 = 10_000_000;
 /// Default tolerance between device and extrapolated time before flagging a discontinuity: 20 ms.
 pub const DEFAULT_MAX_JUMP_100NS: i64 = 200_000;
 
+/// Tolerance for process-loopback streams: 2 ms. Their `GetBuffer` positions are synthetic exact
+/// 10 ms steps per 480-frame packet, so any deviation is real; observed forward jumps of ~8-9 ms
+/// (with no flag) would slip under [`DEFAULT_MAX_JUMP_100NS`]. Mic and endpoint loopback keep the
+/// 20 ms default, as their device times carry real jitter.
+pub const PROCESS_LOOPBACK_MAX_JUMP_100NS: i64 = 20_000;
+
 /// Duration of `frames` frames at [`SAMPLE_RATE`] in 100 ns units (rounded down, saturating).
 pub fn frames_to_100ns(frames: u64) -> i64 {
     let hns = i128::from(frames) * i128::from(HNS_PER_SEC) / i128::from(SAMPLE_RATE);
@@ -333,6 +339,74 @@ mod tests {
             loose.stamp(Some(T0 + 500 * MS), 480),
             (T0 + 500 * MS, false, false)
         );
+    }
+
+    /// The pattern seen on real Windows for process loopback: exact 100_000-hns steps per
+    /// 480-frame packet, then a forward jump of ~8.7 ms (+86_816 hns beyond the usual step) with
+    /// no flag from the device.
+    fn process_loopback_pattern(max_jump: i64) -> Vec<(i64, bool, bool)> {
+        let mut t = TimestampTracker::new(max_jump);
+        let mut out = Vec::new();
+        let mut d = T0;
+        for _ in 0..20 {
+            out.push(t.stamp(Some(d), 480));
+            d += 100_000;
+        }
+        // The jump: this packet starts 86_816 hns later than the previous steps imply.
+        d += 86_816;
+        out.push(t.stamp(Some(d), 480));
+        // Back to exact steps from the new position.
+        for _ in 0..5 {
+            d += 100_000;
+            out.push(t.stamp(Some(d), 480));
+        }
+        out
+    }
+
+    #[test]
+    fn process_loopback_jump_is_flagged_with_strict_threshold() {
+        let out = process_loopback_pattern(PROCESS_LOOPBACK_MAX_JUMP_100NS);
+        for (i, &(_, extrapolated, gap)) in out.iter().enumerate() {
+            assert!(!extrapolated, "chunk {i}");
+            assert_eq!(gap, i == 20, "chunk {i}");
+        }
+        // The device time passes through unchanged, and the timeline re-anchors on it.
+        assert_eq!(out[20].0, T0 + 20 * 100_000 + 86_816);
+        assert_eq!(out[21].0, out[20].0 + 100_000);
+    }
+
+    #[test]
+    fn process_loopback_jump_is_absorbed_by_default_threshold() {
+        let out = process_loopback_pattern(DEFAULT_MAX_JUMP_100NS);
+        assert!(out
+            .iter()
+            .all(|&(_, extrapolated, gap)| !extrapolated && !gap));
+    }
+
+    #[test]
+    fn normal_jitter_is_not_flagged_by_either_threshold() {
+        // Mic-like real QPC: +-0.1 ms of jitter around exact 10 ms steps. The 2 ms threshold
+        // must not misfire on it.
+        for max_jump in [PROCESS_LOOPBACK_MAX_JUMP_100NS, DEFAULT_MAX_JUMP_100NS] {
+            let mut t = TimestampTracker::new(max_jump);
+            t.stamp(Some(T0), 480);
+            for i in 1..200 {
+                let jitter = (i % 3 - 1) * (MS / 10);
+                let d = T0 + i * 10 * MS + jitter;
+                assert_eq!(
+                    t.stamp(Some(d), 480),
+                    (d, false, false),
+                    "threshold {max_jump}, chunk {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn process_loopback_threshold_value() {
+        assert_eq!(PROCESS_LOOPBACK_MAX_JUMP_100NS, 2 * MS);
+        const { assert!(PROCESS_LOOPBACK_MAX_JUMP_100NS < 86_816) };
+        const { assert!(86_816 < DEFAULT_MAX_JUMP_100NS) };
     }
 
     #[test]

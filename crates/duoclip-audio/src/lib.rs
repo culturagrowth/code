@@ -52,6 +52,7 @@ pub mod wasapi;
 pub use process::{descendants, discord_flavor, discord_roots, ProcInfo, DISCORD_EXES};
 pub use timestamp::{
     frames_to_100ns, qpc_ticks_to_100ns, TimestampTracker, DEFAULT_MAX_JUMP_100NS, HNS_PER_SEC,
+    PROCESS_LOOPBACK_MAX_JUMP_100NS,
 };
 
 /// Which audio track a chunk belongs to.
