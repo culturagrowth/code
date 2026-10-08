@@ -5,3 +5,8 @@ worker/dist
 *.log
 .DS_Store
 /test-output
+
+# Local linked worktrees and Claude Code bootstrap instructions.
+/worktrees/
+.claude/worktrees/
+CLAUDE.local.md

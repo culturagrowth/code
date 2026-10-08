@@ -7,6 +7,8 @@ App Windows para amigos que grava o jogo e, num atalho, salva o POV de todos os 
 global (com segundos antes e depois do aperto), trocando os clipes cifrados por um bucket Cloudflare R2.
 
 **Leia primeiro:**
+0. [`docs/COMUNICACAO-AGENTES.md`](docs/COMUNICACAO-AGENTES.md): consulte a caixa compartilhada na pasta principal antes de começar,
+   ao mudar de etapa e antes de encerrar. Entregas, pedidos de revisão e respostas são trocados por arquivos, sem pedir ao usuário que os copie.
 1. [`docs/MEMORIA-DO-PROJETO.md`](docs/MEMORIA-DO-PROJETO.md): decisões, histórico, estado atual e próximos passos.
 2. [`docs/TAREFAS.md`](docs/TAREFAS.md): quem está fazendo o quê agora. **Pegue só tarefas livres ou atribuídas a você.**
 3. O `SPEC.md` de cada crate em que for mexer.
@@ -48,6 +50,17 @@ Pesquisas brutas com fontes: `docs/pesquisa-bruta/`. Relatórios de testes reais
 ## Trabalho com mais de uma IA
 
 O usuário divide tarefas entre o Claude e o GPT. Para não haver conflito:
+
+**Comunicação direta por arquivos:** a caixa canônica fica em `C:\Users\bolad\Projetos\duoclip\docs\comunicacao`.
+Todos os worktrees consultam esse mesmo caminho físico; cópias dentro de branches não representam a fila atual.
+Leia o protocolo em `C:\Users\bolad\Projetos\duoclip\docs\COMUNICACAO-AGENTES.md`.
+O quadro de tarefas e as regras atuais também devem ser consultados na pasta principal.
+Cada remetente cria arquivos novos; o destinatário responde em outro arquivo, referenciando o ID original.
+Uma mensagem só foi recebida quando houver resposta do destinatário. Priorize ajustes e revisões já atribuídos a você.
+Publicar uma mensagem não inicia nem acorda outra sessão de IA; agentes ativos consultam a caixa durante o trabalho.
+
+**Pastas:** todos os worktrees novos ficam dentro de `C:\Users\bolad\Projetos\duoclip\worktrees\<agente>-<tarefa>`.
+Não crie pastas irmãs de `duoclip` em `Projetos`. Preserve uma branch por tarefa e mova worktrees com `git worktree move`.
 
 1. **Uma tarefa por vez, com dono.** Antes de começar, a tarefa tem que estar em `docs/TAREFAS.md` com o seu nome (`Claude` ou `GPT`)
    na coluna "Dono". Se estiver com outro dono, não mexa.
