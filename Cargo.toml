@@ -20,6 +20,8 @@ sha2 = "0.10"
 hex = "0.4"
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["derive"] }
+tempfile = "3"
+windows = "0.62"
 
 [profile.dev]
 opt-level = 1

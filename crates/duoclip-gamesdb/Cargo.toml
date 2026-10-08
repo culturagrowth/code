@@ -1,0 +1,12 @@
+[package]
+name = "duoclip-gamesdb"
+description = "DuoClip games database: anti-cheat per game and capture-backend selection policy"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

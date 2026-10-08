@@ -1,0 +1,15 @@
+[package]
+name = "duoclip-mux"
+description = "DuoClip MP4 muxing: crash-safe fragmented MP4 (local clip bucket) and progressive MP4 for H.264 + AAC"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+duoclip-buffer = { path = "../duoclip-buffer" }
+
+[dev-dependencies]
+tempfile.workspace = true
