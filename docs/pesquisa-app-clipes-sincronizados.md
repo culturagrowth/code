@@ -206,7 +206,10 @@ Não existe benchmark independente comparando os métodos em FPS. Por isso vamos
 **Ordem de fallback:**
 
 1. o método padrão da tabela acima;
-2. WGC de janela (no Windows 10, com borda), se o Desktop Duplication falhar, por exemplo com o jogo num monitor de outra GPU;
+2. ~~WGC de janela (no Windows 10, com borda)~~ **removido (08/10/2026, revisão GDB-2):** a decisão do usuário "nada de borda amarela"
+   vale também para o plano B. O WGC só entra (como primário ou reserva) quando o modo **sem borda** estiver confirmado no PC
+   (Windows 11). Se o Desktop Duplication falhar sem essa opção (por exemplo, jogo num monitor de outra GPU), o app recria o device na
+   GPU certa e, se ainda assim não der, avisa o usuário em vez de gravar com borda;
 3. pedir "tela cheia sem bordas" quando a tela cheia exclusiva der problema;
 4. **banco de dados de jogos** atualizável remotamente (o Medal faz isso), com o método que funciona em cada título.
 

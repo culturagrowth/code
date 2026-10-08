@@ -15,7 +15,7 @@ use duoclip_buffer::{Packet, SharedPacket, TrackId};
 use duoclip_encode::convert::GpuConverter;
 use duoclip_encode::d3d::{create_device, GpuDevice};
 use duoclip_encode::mf_audio::MfAacEncoder;
-use duoclip_encode::mf_video::{EncoderChoice, MfH264Encoder};
+use duoclip_encode::mf_video::{EncoderChoice, MfH264Encoder, MAX_INPUT_SURFACES};
 use duoclip_encode::{
     annexb, frame_time_100ns, AacFramer, EncodedAudio, EncodedVideo, VideoConfig,
 };
@@ -568,53 +568,24 @@ fn software_fallback_encodes_and_decodes() {
     assert_eq!(marks, (0..60).collect::<Vec<u32>>());
 }
 
-#[test]
-#[ignore = "needs a Windows D3D11 GPU with an H.264 encoder MFT and ffmpeg/ffprobe on PATH"]
-fn pipelined_encode_keeps_every_frame_in_order() {
-    // No waiting per frame: convert + encode back to back (the NV12 ring of 3 is reused while
-    // the encoder may still hold earlier frames), then check every decoded frame's marker.
+/// Converts + encodes `frames` frames back to back (no waiting per frame) through a converter
+/// ring of `ring` NV12 textures, muxes them and checks every decoded frame's marker.
+fn run_pipelined(ring: usize, label: &str) {
     assert!(check_ffmpeg(), "ffmpeg/ffprobe must be on PATH");
     let dev = create_device(None).expect("D3D11 device");
     let cfg = VideoConfig::default_for(W, H, FPS);
-    let mut conv = GpuConverter::new(&dev, W, H).expect("converter");
+    let mut conv = GpuConverter::with_ring_size(&dev, W, H, ring).expect("converter");
     let mut enc = MfH264Encoder::new(&dev, &cfg).expect("encoder");
     let src = create_texture(&dev, W, H, DXGI_FORMAT_B8G8R8A8_UNORM);
     let mut base = vec![0u8; (W * H * 4) as usize];
     fill_frame(&mut base, W, H, 0);
     upload(&dev, &src, &base, W * 4);
     let frames = 600u32;
-    let mut mark = vec![0u8; (MARK * MARK_BITS * MARK * 4) as usize];
     let mut units = Vec::new();
     let t0 = Instant::now();
     for i in 0..frames {
         // Marker of frame i (10 bits would be needed above 255: use i % 256).
-        let idx = i % 256;
-        for y in 0..MARK {
-            for x in 0..MARK * MARK_BITS {
-                let v = if (idx >> (x / MARK)) & 1 == 1 { 255 } else { 0 };
-                let o = ((y * MARK * MARK_BITS + x) * 4) as usize;
-                mark[o..o + 4].copy_from_slice(&[v, v, v, 255]);
-            }
-        }
-        let bx = D3D11_BOX {
-            left: 0,
-            top: 0,
-            front: 0,
-            right: MARK * MARK_BITS,
-            bottom: MARK,
-            back: 1,
-        };
-        // SAFETY: `mark` holds the box's rows at the given pitch.
-        unsafe {
-            dev.context.UpdateSubresource(
-                &src,
-                0,
-                Some(&bx),
-                mark.as_ptr().cast(),
-                MARK * MARK_BITS * 4,
-                0,
-            )
-        };
+        upload_marker(&dev, &src, i % 256);
         let nv12 = conv.convert(&src, None).expect("convert");
         enc.encode(&nv12, frame_time_100ns(i64::from(i), FPS, 1), false)
             .expect("encode");
@@ -623,11 +594,15 @@ fn pipelined_encode_keeps_every_frame_in_order() {
     units.extend(enc.drain().expect("drain"));
     let elapsed = t0.elapsed();
     println!(
-        "pipelined: {frames} frames in {:.1} ms → {:.0} fps ({:.3} ms/frame)",
+        "{label}: {frames} frames in {:.1} ms → {:.0} fps ({:.3} ms/frame), {} ({}), input surfaces {}",
         ms(elapsed),
         f64::from(frames) / elapsed.as_secs_f64(),
-        ms(elapsed) / f64::from(frames)
+        ms(elapsed) / f64::from(frames),
+        enc.name(),
+        if enc.gpu_input() { "GPU input" } else { "CPU readback" },
+        enc.input_surfaces(),
     );
+    assert!(enc.input_surfaces() <= MAX_INPUT_SURFACES);
     assert_eq!(units.len(), frames as usize);
     let cfg_mux = MuxConfig {
         tracks: vec![TrackSpec::H264 {
@@ -637,7 +612,7 @@ fn pipelined_encode_keeps_every_frame_in_order() {
         }],
         base_ns: 0,
     };
-    let path = out_dir().join("encode-pipelined.mp4");
+    let path = out_dir().join(format!("encode-{label}.mp4"));
     let file = std::fs::File::create(&path).unwrap();
     write_progressive(
         std::io::BufWriter::new(file),
@@ -649,7 +624,23 @@ fn pipelined_encode_keeps_every_frame_in_order() {
     let path = path.canonicalize().unwrap();
     let marks = decode_markers(path.to_str().unwrap(), W);
     let expected: Vec<u32> = (0..frames).map(|i| i % 256).collect();
-    assert_eq!(marks, expected, "decoded frame-index markers (pipelined)");
+    assert_eq!(marks, expected, "decoded frame-index markers ({label})");
+}
+
+#[test]
+#[ignore = "needs a Windows D3D11 GPU with an H.264 encoder MFT and ffmpeg/ffprobe on PATH"]
+fn pipelined_encode_keeps_every_frame_in_order() {
+    // No waiting per frame: convert + encode back to back with the default NV12 ring of 3.
+    run_pipelined(3, "pipelined");
+}
+
+#[test]
+#[ignore = "needs a Windows D3D11 GPU with an H.264 encoder MFT and ffmpeg/ffprobe on PATH"]
+fn pipelined_encode_with_single_texture_ring_keeps_every_frame() {
+    // B1-E1: a converter ring of ONE texture is overwritten by the very next conversion, while
+    // the async MFT may still hold the samples of earlier frames. The encoder must have taken
+    // its own copy (pool of tracked surfaces), so every decoded marker is still the right one.
+    run_pipelined(1, "pipelined-ring1");
 }
 
 #[test]
@@ -1227,4 +1218,75 @@ fn hdr_fp16_source_without_srv_converts_and_encodes() {
         3,
         "BGRA8 white after HDR",
     );
+}
+
+#[test]
+#[ignore = "needs a Windows D3D11 GPU with an H.264 encoder MFT"]
+fn h264_encoder_balances_com_on_drop() {
+    // B1-E2 for the video encoder: created, used and dropped on a thread whose caller-owned MTA
+    // init ends first; after the drop the thread can become an STA (nothing leaked).
+    use windows::Win32::Foundation::{RPC_E_CHANGED_MODE, S_OK};
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
+    };
+    std::thread::spawn(|| {
+        // SAFETY: COM init/uninit pairs of this test thread.
+        unsafe {
+            assert_eq!(CoInitializeEx(None, COINIT_MULTITHREADED), S_OK);
+        }
+        let dev = create_device(None).expect("D3D11 device");
+        let cfg = VideoConfig::default_for(1280, 720, 60);
+        let mut conv = GpuConverter::new(&dev, 1280, 720).expect("converter");
+        let src = create_texture(&dev, 1280, 720, DXGI_FORMAT_B8G8R8A8_UNORM);
+        let mut enc = MfH264Encoder::new(&dev, &cfg).expect("encoder");
+        // SAFETY: balances the caller's init above (the encoder keeps its own).
+        unsafe { CoUninitialize() };
+        let mut n = 0;
+        for i in 0..10 {
+            let nv12 = conv.convert(&src, None).unwrap();
+            enc.encode(&nv12, frame_time_100ns(i, 60, 1), false)
+                .unwrap();
+            n += enc.poll_output().len();
+        }
+        n += enc.drain().unwrap().len();
+        assert_eq!(n, 10);
+        drop(enc);
+        // SAFETY: as above.
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            assert_ne!(
+                hr, RPC_E_CHANGED_MODE,
+                "COM init leaked by the H.264 encoder"
+            );
+            assert_eq!(hr, S_OK);
+            CoUninitialize();
+        }
+    })
+    .join()
+    .expect("test thread panicked");
+}
+
+#[test]
+#[ignore = "needs a Windows D3D11 GPU with an H.264 encoder MFT"]
+fn encoder_rejects_input_of_the_wrong_size_or_format() {
+    // The encoder copies its input (B1-E1), so the texture must match the configuration.
+    let dev = create_device(None).expect("D3D11 device");
+    let cfg = VideoConfig::default_for(1280, 720, 60);
+    let mut enc = MfH264Encoder::new(&dev, &cfg).expect("encoder");
+    if !enc.gpu_input() {
+        return; // CPU readback path: no copy surfaces.
+    }
+    let mut conv = GpuConverter::new(&dev, 1920, 1080).expect("converter");
+    let src = create_texture(&dev, 1920, 1080, DXGI_FORMAT_B8G8R8A8_UNORM);
+    let big = conv.convert(&src, None).unwrap();
+    assert!(matches!(
+        enc.encode(&big, 0, false),
+        Err(duoclip_encode::EncodeError::Config(_))
+    ));
+    let mut enc = MfH264Encoder::new(&dev, &cfg).expect("encoder");
+    let bgra = create_texture(&dev, 1280, 720, DXGI_FORMAT_B8G8R8A8_UNORM);
+    assert!(matches!(
+        enc.encode(&bgra, 0, false),
+        Err(duoclip_encode::EncodeError::Config(_))
+    ));
 }

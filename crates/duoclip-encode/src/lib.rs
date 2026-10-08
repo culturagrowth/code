@@ -40,6 +40,7 @@ pub mod annexb;
 mod config;
 mod error;
 mod pacer;
+mod slot_pool;
 
 #[cfg(windows)]
 pub mod convert;
@@ -47,6 +48,8 @@ pub mod convert;
 pub mod d3d;
 #[cfg(windows)]
 mod hdr;
+#[cfg(windows)]
+mod input_pool;
 #[cfg(windows)]
 pub mod mf_audio;
 #[cfg(windows)]

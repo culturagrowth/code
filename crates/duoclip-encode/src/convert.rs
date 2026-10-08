@@ -41,7 +41,9 @@ struct Processor {
 /// D3D11 video processor converting capture textures to NV12 at a fixed output size.
 ///
 /// The returned NV12 textures come from a small ring: a texture is overwritten again after
-/// `ring_size` conversions, so the consumer (the encoder) must be done with it by then.
+/// `ring_size` conversions. [`crate::mf_video::MfH264Encoder::encode`] copies its input into
+/// encoder-owned surfaces (B1-E1), so a ring texture handed to it may be reused as soon as
+/// `encode` returns; other consumers must be done with it within `ring_size` conversions.
 pub struct GpuConverter {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
@@ -400,7 +402,7 @@ impl GpuConverter {
 }
 
 /// Creates an NV12 render-target texture usable by the video processor and the encoder.
-fn create_nv12_target(
+pub(crate) fn create_nv12_target(
     device: &ID3D11Device,
     w: u32,
     h: u32,

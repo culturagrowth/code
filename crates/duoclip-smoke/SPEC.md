@@ -20,6 +20,8 @@ Outputs go to `<workspace>/test-output/<sub>/` (never committed). Nothing runs a
 - drift (ppm) of the stream against QPC: least-squares slope of QPC vs. cumulative frames over the longest jump-free segment (≥ 1 s).
   Process loopback stamps turned out to be synthetic exact 10 ms steps (see `docs/relatorios/`), so its drift is 0 by construction;
   the microphone shows the real device drift.
+- Timestamps come from CSV files (`--analyze`), so they are untrusted: all QPC differences and absolute values are computed in `i128`
+  (SMK-1). `i64::MIN`/`i64::MAX`, QPC going backwards (counted as a jump and a gap) and zero-frame packets never panic.
 
 ## Limits
 

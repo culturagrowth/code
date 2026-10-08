@@ -83,7 +83,8 @@ pub mod mf_video {
     /// - ICodecAPI: rate control mode / mean / max bitrate (or QP), CODECAPI_AVEncMPVGOPSize = gop, CODECAPI_AVEncMPVDefaultBPictureCount = 0,
     ///   CODECAPI_AVLowLatencyMode = low_latency;
     /// - async event loop (METransformNeedInput / METransformHaveOutput / METransformDrainComplete) on a worker thread;
-    /// - input samples wrap the NV12 texture (MFCreateDXGISurfaceBuffer), with SampleTime = qpc_100ns relative to the stream start;
+    /// - input samples wrap an encoder-owned copy of the NV12 texture (MFCreateDXGISurfaceBuffer on a pool surface, tracked
+    ///   release; see B1-E1 below), with SampleTime = qpc_100ns relative to the stream start;
     /// - force IDR via CODECAPI_AVEncVideoForceKeyFrame;
     /// - output: Annex B, keyframe from MFSampleExtension_CleanPoint.
     /// If no hardware MFT exists, fall back to the Microsoft software H.264 MFT (sync) with a warning flag.
@@ -131,6 +132,7 @@ Portable:
   `insert_parameter_sets`), `FramePacer::{max_burst, set_max_burst}`, `AAC_MAX_SILENCE_FILL_SECS`.
 - `validate`: VBR avg/max in `100..=1_000_000` kbps with `max >= avg`; fps checked as a rational (`num/den` in 1..=240).
   `default_for`: avg = 30 Mbps x (w*h*fps)/(1920*1080*60), clamped to 500..=200_000 kbps, max = 1.5 x avg, low latency on.
+  Computed in `u128`, never panics (B1-E3 below).
 - `fit_rect`: centred, position and size even (NV12), the scaled side rounded to nearest then down to even (min 2).
 - `FramePacer`: the grid is `start + k * period` with `start` = first frame time (slot times computed from `k`, no drift).
   A frame takes the nearest slot; slots already emitted → dropped. If slots were skipped and `on_idle` was not called,
@@ -167,8 +169,8 @@ Windows:
   `convert` holds the device's multithread lock (`ID3D11Multithread::Enter/Leave`) for the whole call, so the encoder MFT
   (same device and immediate context, its own threads) cannot interleave with the HDR pre-pass pipeline state or the video
   processor rect/blit sequence (review fix; per-call protection alone does not cover sequences).
-  A ring texture is rewritten after `ring_size` conversions; with the hardware MFT, 600 frames converted + encoded
-  back to back (no waiting) decoded with every frame-index marker intact.
+  A ring texture is rewritten after `ring_size` conversions. The encoder no longer keeps it: `encode` copies it into its own
+  surface (B1-E1), so a ring texture may be reused as soon as `encode` returned, whatever the MFT still holds.
 - `mf_video`:
   - MFT choice: hardware MFTs ranked by `MFT_ENUM_ADAPTER_LUID` == device LUID, then (LUID absent, as on NVIDIA) vendor id
     `VEN_xxxx` == device vendor, then other MFTs without a LUID; MFTs reporting another LUID are skipped. Each candidate is
@@ -193,13 +195,60 @@ Windows:
     `MFSampleExtension_DecodeTimestamp`, else = pts.
   - Software fallback: the Microsoft "H264 Encoder MFT" is not D3D11-aware here, so NV12 is read back (staging copy) and fed
     as a memory buffer.
-  - COM is initialized (MTA; an existing STA is accepted) on the calling thread; `MFStartup` runs once per process and MF is
-    never shut down.
+  - COM: see B1-E2 below (per-call / per-encoder guard, balanced on the same thread). `MFStartup` runs once per process and MF
+    is never shut down.
 - `mf_audio`: the Microsoft AAC encoder takes the **input type before the output type**. Accepted: 44.1/48 kHz, mono/stereo,
   `SUPPORTED_KBPS` = 96/128/160/192. ASC = `MF_MT_USER_DATA` minus the 12-byte HEAACWAVEINFO prefix (measured `11 90` for
   48 kHz stereo), else `aac_lc_asc`. Output pts/duration come from the encoder's samples. Additive: `drain`, `name`,
   `frame_duration_100ns`.
 - No FFmpeg backend (as specified).
+
+Review fixes for the GPT cross-review of phase B1 (`docs/revisoes/fase-b1.md`, 2026-10-08):
+- **B1-E1 (input texture ownership).** Before, `encode` wrapped the caller's NV12 texture (a `GpuConverter` ring texture)
+  directly in the input sample; an async MFT may keep a sample after `ProcessInput` returns and `METransformNeedInput` does
+  not say which one it released, so the ring could be overwritten while the MFT still needed it (not reproduced on NVIDIA;
+  inferred from the API contract). Now, with GPU input, `encode` copies the texture (`CopySubresourceRegion`, one GPU copy on
+  the immediate context, ordered before any later write by the caller) into an **encoder-owned surface** and gives the MFT a
+  sample from `MFCreateTrackedSample`; `IMFTrackedSample::SetAllocator` registers a per-surface callback that Media Foundation
+  invokes once every other reference to the sample is released, and only that callback marks the surface free
+  (`input_pool.rs`; the free/in-flight bookkeeping is the portable `slot_pool.rs`). The pool grows on demand up to
+  `MAX_INPUT_SURFACES` = 8; when all are held, `encode` pumps the MFT (async events / sync outputs) and waits for a release
+  (2 ms condvar waits, 5 s total → `Os` error). Consequences: the caller's texture may be reused as soon as `encode`
+  returns; `encode` now rejects (`Config`) an input that is not NV12 of exactly the configured size or that belongs to
+  another D3D11 device. Observed: the release callback did not run before `MFStartup` (the pool test starts MF; the encoder
+  always does). Additive: `mf_video::MAX_INPUT_SURFACES`, `MfH264Encoder::input_surfaces()` (diagnostics; 2 surfaces were
+  allocated on the NVIDIA MFT in the 600-frame pipelined runs). The software path with CPU readback already copied
+  (memory buffer) and is unchanged.
+  Tests: `slot_pool` unit tests (a consumer retaining 0..=7 inputs, i.e. more than three, never sees a slot handed out
+  while held nor a frame overwritten; a naive cyclic ring of 3 is shown to corrupt a 4-frame consumer; bound / reuse /
+  duplicate release), `input_pool::tests::retained_samples_keep_their_pixels_and_surfaces_come_back_on_release` (ignored,
+  GPU: real tracked samples and textures, five samples retained while ONE source texture keeps being overwritten, each
+  keeps its pixels; an extra reference keeps a surface held; exhausted pool waits; released surface is reused; wrong
+  size / other device rejected), `gpu_encode::pipelined_encode_with_single_texture_ring_keeps_every_frame` (converter
+  ring of **one** texture, 600 frames back to back, every decoded marker intact) and
+  `encoder_rejects_input_of_the_wrong_size_or_format`. The ring-of-one test also passed **before** the fix on the NVIDIA MFT,
+  so on this hardware it is a regression guard, not a reproduction.
+  Cost (RTX 5060 Ti, same tests, before → after): per-frame latency 1080p60 avg 3.95 → 3.13 ms (p50 2.89 → 3.01 ms, run-to-run
+  noise dominates; 3.10 ms in the final run); pipelined 1080p 512-524 → 462-490 fps; pacer run 640x360 1311-1335 →
+  1197-1221 fps (about +0.08 to +0.13 ms per frame; not isolated, presumably the extra GPU copy and/or the release round
+  trip, since the encoder thread's own CPU cost is small). On the CPU side the
+  copy + tracked sample cost ~6 µs per frame (measured, 1.2 µs copy call + 4.6 µs sample creation).
+- **B1-E2 (COM balance).** `mf_startup()` returns a `ComGuard` (`mf_common.rs`): `CoInitializeEx(MTA)` and, for every success
+  (S_OK *and* S_FALSE), `CoUninitialize` on drop; `RPC_E_CHANGED_MODE` (caller is an STA, accepted by MF) is not counted as a
+  success and is not balanced. The guard is `!Send`. `list_encoders()` holds one for the call; `MfH264Encoder` /
+  `MfAacEncoder` hold one as their **last field** (dropped after `Drop::drop` and every COM interface, on the creating
+  thread: the encoders are `!Send` because the `windows` COM interfaces are), and their constructors hold one over
+  enumeration and failed set-ups. So the calling thread's apartment is left exactly as it was once the call returns / the
+  encoder is dropped. Tests (`tests/com_balance.rs`, no GPU): the reviewer's repro (thread: MTA → `list_encoders()` → caller
+  uninit → STA must be S_OK), uninitialized thread stays uninitialized (next init is S_OK in either apartment), a caller STA
+  is accepted and kept, AAC encoder keeps COM alive while it lives and balances on drop; ignored GPU test
+  `h264_encoder_balances_com_on_drop`. Three of the four portable tests fail on the code before the fix (the STA one is a
+  guard for the accepted-STA path).
+- **B1-E3 (`default_for` overflow).** `default_for(u32::MAX, u32::MAX, 240)` overflowed the `u64` product (panic with overflow
+  checks, wraparound without). The bitrate is now computed in `u128` (`u32::MAX^3 * 30_000` fits) and clamped to
+  `500..=200_000` before narrowing; sizes and frame rates are kept as given, so `validate()` rejects the extreme
+  configurations. Test `default_for_type_limits_never_panic` (all combinations of `0` / `u32::MAX` / limits, under
+  `catch_unwind`, all rejected by `validate`, bitrate in the clamp range; the largest valid configuration still validates).
 
 Measured on the RTX 5060 Ti (`tests/gpu_encode.rs`, 1920x1080 @ 60, GOP 60, VBR 30/45 Mbps, synthetic content):
 180 access units → `encode-test.mp4` with AAC 48 kHz stereo; ffprobe: h264 High 1920x1080, 180 frames, 3.000 s, keyframes at

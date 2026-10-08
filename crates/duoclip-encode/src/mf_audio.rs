@@ -5,7 +5,7 @@ use windows::Win32::Media::MediaFoundation::*;
 use crate::error::OsContext;
 use crate::mf_common::{
     blob_attr, enum_mfts, memory_sample, mf_startup, process_output, sample_bytes, stream_ids,
-    string_attr, Output,
+    string_attr, ComGuard, Output,
 };
 use crate::{aac_lc_asc, EncodeError, EncodedAudio, AAC_FRAME_SAMPLES, HNS_PER_SEC};
 
@@ -29,6 +29,9 @@ pub struct MfAacEncoder {
     provides_samples: bool,
     name: String,
     stopped: bool,
+    /// COM initialization of the creating thread (B1-E2). Last field: dropped after every COM
+    /// interface above (and after `Drop::drop`), on the same thread (the encoder is `!Send`).
+    _com: ComGuard,
 }
 
 impl MfAacEncoder {
@@ -45,7 +48,8 @@ impl MfAacEncoder {
                 "AAC bitrate {kbps} kbps not in {SUPPORTED_KBPS:?}"
             )));
         }
-        mf_startup()?;
+        // Declared before every COM local, so it is dropped after them (B1-E2).
+        let _com = mf_startup()?;
         let list = enum_mfts(
             MFT_CATEGORY_AUDIO_ENCODER,
             MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
@@ -88,6 +92,8 @@ impl MfAacEncoder {
         channels: u16,
         kbps: u32,
     ) -> Result<Self, EncodeError> {
+        // The encoder's own COM reference (the caller's `_com` in `new` covers the error paths).
+        let com = mf_startup()?;
         let (in_id, out_id) = stream_ids(&mft);
         let ch = u32::from(channels);
         // SAFETY: media type construction and negotiation with plain values. The Microsoft AAC
@@ -177,6 +183,7 @@ impl MfAacEncoder {
             provides_samples,
             name,
             stopped: false,
+            _com: com,
         })
     }
 

@@ -2,8 +2,10 @@
 
 Pure Rust, platform-independent, `#![forbid(unsafe_code)]`. Implements docs sections 4.5–4.8:
 - the default capture is **non-injection**;
-- the optional **hook** backend is allowed only for games **without anti-cheat**, only when the user enabled it for that game, and only when the
-  hook component is installed (future phase).
+- the optional **hook** backend (future phase, outside the MVP) is allowed only for games on a **fixed, code-level allowlist** (initially Minecraft
+  Java only), **without anti-cheat**, only when the user enabled it for that game, the hook component is installed and **no kernel
+  anti-cheat is running on the PC** (GDB-1);
+- **WGC never shows the yellow border** (GDB-2): it is used only on Windows 11 with confirmed borderless support.
 
 ## API
 
@@ -37,7 +39,9 @@ impl GamesDb {
 }
 
 pub struct OsInfo { pub build: u32 }   // Windows build number (19045 = Win10 22H2, >= 22000 = Win11)
-pub struct Environment { pub os: OsInfo, pub borderless_wgc_available: bool, pub hook_installed: bool }
+pub enum KernelAntiCheatState { NotRunning, Running, Unknown }   // is a kernel/platform anti-cheat running on the PC (any game)?
+pub struct Environment { pub os: OsInfo, pub borderless_wgc_available: bool, pub hook_installed: bool, pub kernel_anticheat: KernelAntiCheatState }
+pub const HOOK_ALLOWLIST: &[&str] = &["minecraft-java"];      // fixed in code, NOT read from games.json / remote updates
 pub struct UserPrefs { pub per_game_backend: std::collections::HashMap<String, Backend>, pub hook_enabled_games: std::collections::HashSet<String> }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,12 +52,15 @@ pub fn choose_backend(game: Option<&GameEntry>, env: &Environment, prefs: &UserP
 
 ## Selection rules (choose_backend)
 
-1. OS default: if `build < 22000` (Windows 10), or Win11 without `borderless_wgc_available` → `DdaCrop`, then fallback `Wgc`.
-   If Win11 with `borderless_wgc_available` → `Wgc`, then fallback `DdaCrop`.
+1. OS default: Windows 11 with `borderless_wgc_available` → `Wgc`, then fallback `DdaCrop`. Windows 10 (`build < 22000`), or Windows 11 without
+   `borderless_wgc_available` → `DdaCrop` **only** (empty fallbacks; no `Wgc` fallback).
 2. A known game's `default_backend` overrides the OS default, if it is allowed. A user per-game preference overrides that, if it is allowed.
-3. `Hook` may be chosen as primary **only if** ALL of these hold: the game has no anti-cheat (`anticheat` empty or only `None`), `Hook` is in
-   `allowed_backends`, the user enabled hook for that game id, and `hook_installed`. Otherwise `Hook` is removed and the next rule applies.
-   `Hook` is **never** a fallback.
+   A `Wgc` preference or default is **ignored** (never primary, never fallback) unless `build >= 22000` and `borderless_wgc_available`; `reason_pt`
+   says so ("WGC exigiria borda amarela").
+3. `Hook` may be chosen as primary **only if** ALL of these hold: (a) the game id is in `HOOK_ALLOWLIST` (code constant, initially `minecraft-java`);
+   (b) the game has no anti-cheat (`anticheat` empty or only `None`) and `Hook` is in `allowed_backends`; (c) the user enabled hook for that exact game
+   id; (d) `hook_installed`; (e) `kernel_anticheat == NotRunning` (`Running` and `Unknown` both block it). Otherwise `Hook` is removed and the next
+   rule applies. `Hook` is **never** a fallback.
 4. Unknown games (no entry) get the OS default (never hook).
 5. `reason_pt` explains the choice in Portuguese (one sentence).
 
@@ -87,8 +94,13 @@ About 30 games popular in Brazil:
   - Win10 vs Win11, with and without borderless;
   - known vs unknown game;
   - user preference allowed vs disallowed;
-  - hook only when every condition holds (test each failing condition, including anti-cheat present, not installed, not enabled, not allowed);
-  - hook never appears in fallbacks.
+  - hook only when every condition holds (test each failing condition, including anti-cheat present, not installed, not enabled, not allowed,
+    not on the allowlist, kernel anti-cheat `Running` and `Unknown`);
+  - Minecraft Java is allowed when all hold; Valheim and every other no-anti-cheat game never get hook; a remote/merged db cannot add hook
+    eligibility;
+  - hook never appears in fallbacks;
+  - `Wgc` appears neither as primary nor as fallback on Windows 10 or Windows 11 without borderless WGC, even with a `Wgc` user preference or db
+    default.
 - Validation rejects every rule violation. `merged` handles version precedence.
 - `cargo clippy -p duoclip-gamesdb --all-targets -- -D warnings` is clean and `cargo fmt` is applied.
 
@@ -114,9 +126,30 @@ About 30 games popular in Brazil:
     `Hook`) AND every rule-3 condition holds. `hook_enabled_games` alone does not select the hook;
   - candidates in order: user preference, game default, OS default. A candidate that is not in `allowed_backends` (or a blocked hook) is
     skipped, and `reason_pt` says why;
-  - fallbacks are the other non-hook backends in OS-default order, limited to the game's `allowed_backends`;
+  - fallbacks are the other usable non-hook backends in OS-default order (so no `Wgc` without borderless support; they may be empty), limited to the game's `allowed_backends`;
   - an inconsistent entry that allows no usable backend yields the plain OS default (never a panic, never the hook).
 - **Data:** 30 games in `games.json`, all `verified: false`, `default_backend: null`. Only games without anti-cheat list `hook`
   (Minecraft Java, Valheim, Terraria, Among Us, Lethal Company, Phasmophobia, Stardew Valley, Hollow Knight); Minecraft Bedrock has no
   anti-cheat but does not list `hook` (protected Store/GDK process). Entries marked "(a confirmar)" in the notes are the least certain
   (Marvel Rivals, League of Legends/Vanguard, Phasmophobia).
+- **GDB-1 (hook policy, review `docs/revisoes/gamesdb-smoke.md`):** AGENTS.md ("Decisões que não devem ser revertidas") restricts the future hook
+  mode to Minecraft Java at first, with a fixed block list, and turns it off while a kernel anti-cheat is running. Therefore:
+  - `HOOK_ALLOWLIST` (`&["minecraft-java"]`) is a code constant. It is deliberately **not** data: `games.json` and remote updates (`from_json`,
+    `merged`) can set `allowed_backends`/`default_backend` to `hook` for any id, but that never makes a game eligible. Widening the list needs a
+    code change (and a conversation with the user). The `allowed_backends` flag in the data is a *necessary* condition, not a sufficient one;
+  - `Environment.kernel_anticheat: KernelAntiCheatState` is a tri-state about the **PC**, independent of the target game (Valorant's Vanguard
+    running while capturing Minecraft still blocks the hook). `Unknown` (check not done or failed) blocks like `Running`; whoever builds the
+    `Environment` must report `NotRunning` only after a successful check (the detector itself is future work);
+  - block order for `reason_pt`: game anti-cheat, hook not in `allowed_backends`, not on the allowlist, not enabled by the user, hook not installed,
+    kernel anti-cheat running/unknown. `hook_enabled_games` is keyed by the exact game id. `Hook` is still never a fallback.
+  - The 8 embedded games without anti-cheat that list `hook` in `games.json` keep that flag (they are `verified: false`), but only Minecraft Java
+    can ever be selected with it.
+- **GDB-2 (no yellow border, review `docs/revisoes/gamesdb-smoke.md`):** "Nada de borda amarela" and "no Windows 10 there is no documented way to
+  remove the WGC border" (AGENTS.md) mean the previous "DdaCrop, then WGC fallback" table was wrong. Now `Wgc` is usable only when
+  `os.is_windows_11() && borderless_wgc_available`; `borderless_wgc_available` is ignored on Windows 10 (build < 22000). In every other case the
+  OS default is `DdaCrop` alone and `fallbacks` is empty. A user preference or db default of `Wgc` there is skipped, with `reason_pt` saying
+  "WGC exigiria borda amarela" (Windows 10 or Windows 11 without borderless WGC). Consumers must treat an empty `fallbacks` as "no second
+  option: report the capture failure", never retry with WGC themselves. Edge case: a (validation-rejected) entry that allows only `Wgc`
+  still yields `DdaCrop`, because the yellow border rule outranks `allowed_backends`.
+- **API changes:** `Environment` gained the `kernel_anticheat` field (struct literals must set it); new public `KernelAntiCheatState` and
+  `HOOK_ALLOWLIST`; the `BackendChoice.fallbacks` contract changed (may be empty, never `Wgc` without borderless support).

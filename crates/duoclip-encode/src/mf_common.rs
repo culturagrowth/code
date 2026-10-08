@@ -1,28 +1,74 @@
 //! Media Foundation helpers shared by the video and audio encoders (Windows only).
 
+use std::marker::PhantomData;
 use std::sync::OnceLock;
 
 use windows::core::{GUID, PWSTR};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::*;
-use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{
+    CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED,
+};
 use windows::Win32::System::Variant::VARIANT;
 
 use crate::error::OsContext;
 use crate::EncodeError;
 
-/// Initializes COM on the calling thread (MTA; an existing STA is accepted) and Media Foundation
-/// once per process. MF is never shut down: the encoders may live until the process exits.
-pub(crate) fn mf_startup() -> Result<(), EncodeError> {
-    // SAFETY: plain COM initialization of the calling thread; S_FALSE (already initialized) is
-    // fine, RPC_E_CHANGED_MODE means the thread is an STA, which Media Foundation also accepts.
-    let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    if hr.is_err() && hr != RPC_E_CHANGED_MODE {
-        return Err(EncodeError::Os {
-            context: "CoInitializeEx".into(),
-            hresult: hr.0,
-        });
+/// One COM initialization of the current thread, balanced on drop (B1-E2).
+///
+/// `CoInitializeEx` must be balanced by `CoUninitialize` for every success, S_FALSE (already
+/// initialized) included. The guard does that on drop, on the same thread: it is `!Send` and
+/// `!Sync`, and every owner keeps it as its *last* field / first local so it is dropped after
+/// the COM interfaces it protects. `RPC_E_CHANGED_MODE` (the thread is already an STA, which
+/// Media Foundation accepts) is not a success: nothing is balanced then. The caller's own
+/// apartment is never changed once all guards are gone: after a `list_encoders()` or an
+/// encoder drop the thread is back to the state it had before.
+pub(crate) struct ComGuard {
+    /// `true` when this guard's `CoInitializeEx` succeeded (S_OK or S_FALSE).
+    balance: bool,
+    /// `!Send + !Sync`: CoUninitialize must run on the initializing thread.
+    _thread_bound: PhantomData<*const ()>,
+}
+
+impl ComGuard {
+    /// Initializes COM (MTA) on the calling thread; an existing STA is accepted.
+    pub(crate) fn init_mta() -> Result<Self, EncodeError> {
+        // SAFETY: plain COM initialization of the calling thread, balanced in Drop on success.
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if hr == RPC_E_CHANGED_MODE {
+            return Ok(Self {
+                balance: false,
+                _thread_bound: PhantomData,
+            });
+        }
+        if hr.is_err() {
+            return Err(EncodeError::Os {
+                context: "CoInitializeEx".into(),
+                hresult: hr.0,
+            });
+        }
+        Ok(Self {
+            balance: true,
+            _thread_bound: PhantomData,
+        })
     }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        if self.balance {
+            // SAFETY: balances the successful CoInitializeEx of `init_mta` on the same thread
+            // (the guard is !Send); the owner dropped its COM interfaces before this guard.
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+/// Initializes COM on the calling thread (MTA; an existing STA is accepted) for as long as the
+/// returned guard lives, and Media Foundation once per process. MF is never shut down: the
+/// encoders may live until the process exits.
+pub(crate) fn mf_startup() -> Result<ComGuard, EncodeError> {
+    let com = ComGuard::init_mta()?;
     static STARTED: OnceLock<i32> = OnceLock::new();
     let hr = *STARTED.get_or_init(|| {
         // SAFETY: process-wide Media Foundation start-up, done exactly once.
@@ -37,7 +83,7 @@ pub(crate) fn mf_startup() -> Result<(), EncodeError> {
             hresult: hr,
         });
     }
-    Ok(())
+    Ok(com)
 }
 
 /// `(hi << 32) | lo`, the packing of MF_MT_FRAME_SIZE / MF_MT_FRAME_RATE / ratios.

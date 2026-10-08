@@ -2,7 +2,7 @@
 //! with a fallback to the Microsoft software H.264 MFT (sync).
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::{Interface, GUID};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
@@ -12,15 +12,23 @@ use windows::Win32::System::Variant::VARIANT;
 use crate::annexb;
 use crate::d3d::GpuDevice;
 use crate::error::OsContext;
+use crate::input_pool::InputPool;
 use crate::mf_common::{
     blob_attr, codec_set, enum_mfts, memory_sample, mf_startup, pack, process_output, stream_ids,
-    string_attr, Output,
+    string_attr, ComGuard, Output,
 };
 use crate::mf_events::{EventPump, PumpEvent};
 use crate::{EncodeError, EncodedVideo, GpuVendor, RateControl, VideoConfig};
 
 /// How long a blocking wait for an encoder event may take before it is reported as an error.
 const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Bound of the encoder-owned NV12 input surfaces (see [`MfH264Encoder::encode`], B1-E1).
+/// The pool grows on demand: as many surfaces as the MFT actually keeps at once, plus one.
+pub const MAX_INPUT_SURFACES: usize = 8;
+
+/// Longest single wait for a pool surface release before pumping the MFT again.
+const RELEASE_POLL: Duration = Duration::from_millis(2);
 
 /// Which kind of H.264 MFT [`MfH264Encoder::with_choice`] may use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +55,12 @@ pub struct EncoderInfo {
 }
 
 /// Lists the H.264 encoder MFTs (NV12 → H.264), hardware first.
+///
+/// COM is initialized (MTA, or the thread's existing STA) only for the duration of the call and
+/// balanced before returning: the caller's thread is left as it was (B1-E2).
 pub fn list_encoders() -> Result<Vec<EncoderInfo>, EncodeError> {
-    mf_startup()?;
+    // Declared first: dropped after the enumerated activates (B1-E2).
+    let _com = mf_startup()?;
     let mut out = Vec::new();
     for hardware in [true, false] {
         for activate in enumerate(hardware)? {
@@ -122,11 +134,17 @@ pub struct MfH264Encoder {
     /// `None`: the MFT reads D3D11 textures; `Some`: textures are read back to system memory.
     readback: Option<GpuDevice>,
     _manager: Option<IMFDXGIDeviceManager>,
+    /// Encoder-owned copies of the input textures, reused only once the MFT released them
+    /// (B1-E1). `Some` exactly when `readback` is `None`.
+    inputs: Option<InputPool>,
     pending: VecDeque<EncodedVideo>,
     frames_in: u64,
     error: Option<EncodeError>,
     stopped: bool,
     warnings: Vec<String>,
+    /// COM initialization of the creating thread (B1-E2). Last field: dropped after every COM
+    /// interface above (and after `Drop::drop`), on the same thread (the encoder is `!Send`).
+    _com: ComGuard,
 }
 
 impl MfH264Encoder {
@@ -143,7 +161,8 @@ impl MfH264Encoder {
         choice: EncoderChoice,
     ) -> Result<Self, EncodeError> {
         cfg.validate()?;
-        mf_startup()?;
+        // Declared before every COM local: covers enumeration and the failed set-ups (B1-E2).
+        let _com = mf_startup()?;
         let mut failures = Vec::new();
         if choice != EncoderChoice::SoftwareOnly {
             let mut candidates: Vec<(u8, IMFActivate)> = enumerate(true)?
@@ -235,6 +254,8 @@ impl MfH264Encoder {
         hardware: bool,
         name: String,
     ) -> Result<Self, EncodeError> {
+        // The encoder's own COM reference (`with_choice` holds another one over the error paths).
+        let com = mf_startup()?;
         let mut warnings = Vec::new();
         // SAFETY: attribute reads/writes on the MFT's own attribute store.
         let (is_async, d3d11_aware) = unsafe {
@@ -394,13 +415,23 @@ impl MfH264Encoder {
             } else {
                 Some(dev.clone())
             },
+            inputs: manager
+                .is_some()
+                .then(|| InputPool::new(dev, cfg.width, cfg.height, MAX_INPUT_SURFACES)),
             _manager: manager,
             pending: VecDeque::new(),
             frames_in: 0,
             error: None,
             stopped: false,
             warnings,
+            _com: com,
         })
+    }
+
+    /// Number of NV12 input surfaces the encoder allocated so far (at most
+    /// [`MAX_INPUT_SURFACES`]; 0 with CPU readback). Diagnostics.
+    pub fn input_surfaces(&self) -> usize {
+        self.inputs.as_ref().map_or(0, InputPool::len)
     }
 
     /// `true` when a hardware MFT is in use.
@@ -428,6 +459,12 @@ impl MfH264Encoder {
     /// Submits one NV12 texture (the configured size) with its presentation time. `force_idr`
     /// requests an IDR; IDRs are also forced on every GOP boundary (`frame % gop_frames == 0`)
     /// so GOPs stay closed and aligned even if the encoder's own GOP counter drifts.
+    ///
+    /// `nv12` must be an NV12 texture of exactly the configured size on the encoder's device
+    /// (`Config` error otherwise). It is copied into an encoder-owned surface that the MFT
+    /// releases on its own schedule (B1-E1), so the caller may overwrite `nv12` as soon as this
+    /// returns. When all [`MAX_INPUT_SURFACES`] surfaces are still held by the MFT, this waits
+    /// (up to 5 s) for one to be released.
     pub fn encode(
         &mut self,
         nv12: &ID3D11Texture2D,
@@ -514,23 +551,42 @@ impl MfH264Encoder {
         Ok(())
     }
 
-    fn input_sample(&self, nv12: &ID3D11Texture2D) -> Result<IMFSample, EncodeError> {
+    /// Builds the input sample. With GPU input, `nv12` is copied into an encoder-owned surface
+    /// (see [`InputPool`]); the caller may overwrite `nv12` as soon as `encode` returns.
+    fn input_sample(&mut self, nv12: &ID3D11Texture2D) -> Result<IMFSample, EncodeError> {
         if let Some(dev) = &self.readback {
             let bytes = crate::convert::read_nv12(&dev.device, &dev.context, nv12)?;
             return memory_sample(&bytes);
         }
-        // SAFETY: wraps the texture (AddRef'd by the buffer) in a DXGI surface buffer.
-        unsafe {
-            let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, nv12, 0, false)
-                .ctx("MFCreateDXGISurfaceBuffer")?;
-            if let Ok(buffer2d) = buffer.cast::<IMF2DBuffer>() {
-                if let Ok(len) = buffer2d.GetContiguousLength() {
-                    buffer.SetCurrentLength(len).ctx("SetCurrentLength")?;
+        let Some(inputs) = &self.inputs else {
+            return Err(EncodeError::Stopped);
+        };
+        inputs.check_input(nv12)?;
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        loop {
+            if let Some(inputs) = &mut self.inputs {
+                if let Some(sample) = inputs.try_sample(nv12)? {
+                    return Ok(sample);
                 }
             }
-            let sample = MFCreateSample().ctx("MFCreateSample")?;
-            sample.AddBuffer(&buffer).ctx("IMFSample::AddBuffer")?;
-            Ok(sample)
+            // Every surface is still held by the MFT: let it progress (outputs release inputs).
+            if self.async_state.is_some() {
+                self.pump_events(false)?;
+            } else {
+                self.pull_sync_outputs()?;
+            }
+            if Instant::now() >= deadline {
+                return Err(EncodeError::Os {
+                    context: format!(
+                        "encoder kept all {MAX_INPUT_SURFACES} input surfaces for {} s",
+                        EVENT_TIMEOUT.as_secs()
+                    ),
+                    hresult: 0x8000_4005_u32 as i32,
+                });
+            }
+            if let Some(inputs) = &self.inputs {
+                inputs.wait_for_release(RELEASE_POLL);
+            }
         }
     }
 

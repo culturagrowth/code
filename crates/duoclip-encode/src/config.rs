@@ -136,11 +136,16 @@ impl VideoConfig {
     /// Default configuration for `width x height @ fps`: VBR scaled by `pixels * fps` from
     /// 1080p60 → avg 30 Mbps / max 45 Mbps (avg clamped to `500..=200_000` kbps, max = 1.5 x avg),
     /// GOP = fps (1 s), low latency on. `fps == 0` is treated as 1.
+    ///
+    /// Never panics, whatever the arguments: the bitrate is computed in `u128`
+    /// (`u32::MAX^3 * 30_000` fits easily) and clamped before narrowing. Out-of-range sizes or
+    /// frame rates are kept as given, so [`VideoConfig::validate`] rejects them (B1-E3).
     pub fn default_for(width: u32, height: u32, fps: u32) -> Self {
         let fps = fps.max(1);
-        const REF_RATE: u64 = 1920 * 1080 * 60;
-        let rate = u64::from(width) * u64::from(height) * u64::from(fps);
-        let avg = (30_000u64 * rate + REF_RATE / 2) / REF_RATE;
+        const REF_RATE: u128 = 1920 * 1080 * 60;
+        let rate = u128::from(width) * u128::from(height) * u128::from(fps);
+        let avg = (30_000u128 * rate + REF_RATE / 2) / REF_RATE;
+        // Clamped to 500..=200_000 before narrowing: the cast cannot truncate.
         let avg = avg.clamp(500, 200_000) as u32;
         Self {
             width,
@@ -267,6 +272,55 @@ mod tests {
         );
         c.validate().unwrap();
         assert_eq!(VideoConfig::default_for(640, 480, 0).fps_num, 1);
+    }
+
+    /// B1-E3: extreme arguments never panic (overflow-checked in debug, no wraparound in
+    /// release) and the result is rejected by `validate()` instead.
+    #[test]
+    fn default_for_type_limits_never_panic() {
+        let max = u32::MAX;
+        for (w, h, fps) in [
+            (max, max, 240),
+            (max, max, max),
+            (max, 1, 1),
+            (1, max, max),
+            (max, max, 0),
+            (0, 0, 0),
+            (0, max, max),
+            (7680, 4320, max),
+        ] {
+            let c = std::panic::catch_unwind(|| VideoConfig::default_for(w, h, fps))
+                .unwrap_or_else(|_| panic!("default_for({w}, {h}, {fps}) panicked"));
+            assert!(c.validate().is_err(), "{w}x{h}@{fps} must be rejected");
+            // The bitrate always lands in the clamp range; huge areas saturate at the ceiling,
+            // zero areas sit on the floor.
+            let RateControl::Vbr { avg_kbps, max_kbps } = c.rate else {
+                panic!("default_for must use VBR");
+            };
+            assert!(
+                (500..=200_000).contains(&avg_kbps),
+                "{w}x{h}@{fps}: {avg_kbps}"
+            );
+            assert_eq!(max_kbps, avg_kbps + avg_kbps / 2);
+            if w == 0 || h == 0 {
+                assert_eq!(avg_kbps, 500);
+            } else if w == max && h == max {
+                assert_eq!(avg_kbps, 200_000);
+            }
+            assert_eq!(c.gop_frames, fps.max(1));
+            // Derived values stay panic-free too.
+            let _ = c.frame_duration_100ns();
+        }
+        // The largest valid configuration is still accepted and saturates the bitrate.
+        let c = VideoConfig::default_for(MAX_WIDTH, MAX_HEIGHT, MAX_FPS);
+        c.validate().unwrap();
+        assert_eq!(
+            c.rate,
+            RateControl::Vbr {
+                avg_kbps: 200_000,
+                max_kbps: 300_000
+            }
+        );
     }
 
     #[test]
