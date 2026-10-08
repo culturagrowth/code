@@ -233,6 +233,17 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 
 ### Em andamento / pendente desta sessão
 
+- **Fase B1** (workflow de agentes): a Fase B foi dividida em B1 e B2.
+  - B1 implementa os crates com esqueleto e SPEC já no GitHub:
+    - `duoclip-gamesdb` (sonnet): banco de jogos + política de escolha do método de captura;
+    - `duoclip-mux` (opus): MP4 fragmentado crash-safe + MP4 progressivo, testado com o ffmpeg do sistema;
+    - `duoclip-audio` (opus): WASAPI process loopback do jogo e do Discord + mic;
+    - `duoclip-encode` (opus): conversão de cor na GPU + encoders H.264/AAC via Media Foundation.
+  - **O código Windows de B1 só foi compilado** (`--target x86_64-pc-windows-gnu`). Ele precisa ser **executado e testado num Windows real**.
+  - Se os crates estiverem só com stub no GitHub, a B1 não terminou: implemente seguindo os SPECs.
+- **Fase B2** (depois da pesquisa de captura): `duoclip-capture` com os backends `dda_crop` e `wgc` (e o stub do hook), seguindo as seções 4.6–4.10 do documento de pesquisa.
+- A primeira rodada da pesquisa de captura morreu quando uma mensagem do usuário interrompeu a sessão. **Ela foi relançada.**
+
 - **Pesquisa de captura sem borda no Windows 10** (workflow de pesquisa): compara Desktop Duplication recortado × DWM shared surface × hook,
   com uma tabela de anti-cheat por jogo. Se o resultado não estiver no documento de pesquisa, refaça essa pesquisa antes da Fase B.
 
