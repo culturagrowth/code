@@ -25,6 +25,7 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 10 | Worker: presença por grupo (`POST /v1/presence` com heartbeat e `GET /v1/crews/:crew/presence`) para alimentar a sessão | C | `worker/` | — | Claude | livre | — | Boa candidata para o GPT: TypeScript isolado, com testes no vitest |
 | 11 | `rust-toolchain.toml` para fixar a versão do Rust | — | raiz | — | — | livre | — | Decisão do usuário (lints novos quebram o `-D warnings`) |
 | 12 | Revisão retroativa: crate `duoclip-smoke` e a correção do double free no áudio (commit `32f98ac`) | B1 | só `docs/revisoes/` | — | GPT | em revisão | (já na integração) | Entrou antes da regra de revisão cruzada |
+| 13 | Configurar os bindings R2/D1 e validar upload/download no R2 real | C | `worker/` | GPT | Claude | em andamento | `gpt/worker-r2` | Credenciais no `.dev.vars` local; o teste de rede precisa executar fora do sandbox que retornou EACCES |
 
 ## Concluídas
 
