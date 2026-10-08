@@ -298,7 +298,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 - Tarefa 10: presença do Worker em `gpt/worker-presenca`, commit de entrega `5573717`, aguardando revisão do Claude.
   Implementa heartbeat, consulta de membros disponíveis por grupo, TTL de 30 s, sequência crescente e migração 0003;
   355 testes Worker e 374 testes Rust passaram. O contrato completo está no SPEC daquela branch.
-- Tarefa 13: configuração R2/D1 em `gpt/worker-r2`, worktree `C:\Users\bolad\Projetos\duoclip-gpt-worker-r2`.
+- Tarefa 13: configuração R2/D1 em `gpt/worker-r2`, worktree `C:\Users\bolad\Projetos\duoclip\worktrees\gpt-worker-r2`.
   Os ids não secretos foram preenchidos no `worker/wrangler.toml`. As chaves S3 permanecem somente no arquivo
   ignorado `C:\Users\bolad\Projetos\duoclip\worker\.dev.vars`, preenchido pelo usuário; seus valores não foram exibidos.
 - `npm run test:r2 -- --env-file <arquivo>` usa o presigner real, um objeto sintético cifrado com UUIDs novos, valida
@@ -308,8 +308,9 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
   download íntegro (200), tamanho incorreto rejeitado (403), exclusão (204) e ausência final (404), com `cleanup: "done"`.
   As tentativas anteriores do GPT foram bloqueadas pelo sandbox com `EACCES`; a execução remota foi feita pelo usuário.
   A tarefa 13 está em revisão pelo Claude; evidência em [`worker/R2-VALIDACAO.md`](../worker/R2-VALIDACAO.md), commit `e6ff0c8`.
-  O Wrangler local informou ausência de autenticação. Nenhum deploy, migração remota ou validação remota de D1 foi realizado.
-  S3 não substitui a autenticação administrativa do Wrangler; o próximo passo é login e consulta do D1 no terminal habitual.
+  Depois, o usuário autenticou o Wrangler e consultou o D1 configurado com sucesso: banco `duoclip`, região `ENAM`, 0 tabelas.
+  Nenhum deploy ou migração remota foi realizado. S3 não substitui a autenticação administrativa do Wrangler.
+  Pedidos e respostas agora são publicados na caixa canônica `C:\Users\bolad\Projetos\duoclip\docs\comunicacao`.
 - As branches locais continuam separadas; a configuração R2 não contém o código de presença, que será integrado após revisão.
   O ambiente também não conseguiu conectar ao GitHub para publicar as entregas.
 
@@ -357,7 +358,7 @@ Os diagnósticos ficam no crate `crates/duoclip-smoke` (`sysinfo`, `audio_probe`
 5. ❌ Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso. (No 26300, `IsBorderRequired` e `GraphicsCaptureAccess` existem.)
 6. ❌ "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame). (O teste SNTP contra `time.cloudflare.com` passou no Windows.)
 7. 🟡 Cloudflare: ✅ presigner contra R2 real validado pelo usuário em 08/10/2026, com limpeza concluída;
-   ❌ autenticação Wrangler, migrações D1 e Worker publicado ainda pendentes (ver `worker/R2-VALIDACAO.md`).
+   ✅ consulta do D1 pelo Wrangler; ❌ migrações D1 e Worker publicado ainda pendentes (ver `worker/R2-VALIDACAO.md`).
 8. Opcional: teste "caixa-preta" do Medal 2026 (`tasklist /m medal-hook64.dll` e os logs em `%AppData%\Medal`).
 
 ## 7. Como retomar em outro ambiente
