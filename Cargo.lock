@@ -166,6 +166,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "duoclip-capture"
+version = "0.1.0"
+dependencies = [
+ "duoclip-buffer",
+ "duoclip-encode",
+ "duoclip-gamesdb",
+ "duoclip-mux",
+ "thiserror",
+ "windows",
+]
+
+[[package]]
 name = "duoclip-clock"
 version = "0.1.0"
 dependencies = [
