@@ -94,6 +94,21 @@ limitação. A primeira tentativa foi preservada como
 `test-output/review-recorder/recorder-e2e-tentativa-1.mp4` e
 `media-verification-tentativa-1.json`. A saída MP4 padrão agora contém a segunda tentativa.
 
+### Execução pelo usuário com `!` no CLI
+
+O usuário executou o script pelo atalho `!` do CLI, que entregou a saída como
+`user_shell_command`. Corrigida a orientação anterior do GPT: esse atalho executa comandos
+na sessão, e não se pode tratar todo comando enviado pelo usuário como texto sem execução.
+Não consultamos o desktop dessa execução; não afirmar que ocorreu no desktop normal só
+porque o script se chama `rodar-teste-primeiro-plano.ps1`.
+
+O log `hardware-desktop-normal.log` foi criado. Teste passou (1 teste, 0 falhas), ainda
+com primeiro plano `false`. A análise do MP4 atualizado confirmou 3,027 s, 110.868 bytes,
+tom de 440,005 Hz e 90 quadros apresentados escuros idênticos na redução para 64×36.
+SHA-256: `1ac633ff0e3e7c2bc2872941f8d8a653cb228788f0bf3f5a072b4cae2ea6c444`.
+A validação visual segue pendente. Próxima informação útil: se a janela colorida apareceu
+no desktop visível do usuário nessa execução.
+
 Esse teste não valida a detecção de um jogo real, o registro do atalho nem as fontes WASAPI
 de jogo/Discord/microfone. Essas partes continuam **não verificadas com hardware**.
 Permanecem os limites já documentados da captura DDA, inclusive sobreposições visíveis.
