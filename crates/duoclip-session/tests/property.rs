@@ -48,6 +48,7 @@ enum Input {
     Membership(BTreeMap<CrewId, BTreeSet<DeviceId>>),
     LocalGame(Option<String>),
     Presence(Presence, u64),
+    Snapshot(Vec<Presence>, u64),
     Choose(CrewId, u64),
     Tick(u64),
     MyPresence,
@@ -72,7 +73,20 @@ fn random_membership(rng: &mut Rng) -> BTreeMap<CrewId, BTreeSet<DeviceId>> {
     out
 }
 
-fn random_inputs(seed: u64, steps: usize) -> Vec<Input> {
+fn random_presence(rng: &mut Rng) -> Presence {
+    Presence {
+        device: dev(rng.below(24)),
+        seq: rng.below(6),
+        game: random_game(rng),
+        active_crew: (rng.below(2) == 0).then(|| crew(rng.below(5))),
+        seated_since_ms: (rng.below(2) == 0).then(|| rng.below(1_000)),
+        online_since_ms: rng.below(1_000),
+    }
+}
+
+/// `snapshots`: some ticks are replaced by Worker-style snapshots (`apply_snapshot`). Without it
+/// the generated sequence is the original one.
+fn random_inputs(seed: u64, steps: usize, snapshots: bool) -> Vec<Input> {
     let mut rng = Rng::new(seed);
     let mut now = 0u64;
     let mut inputs = vec![
@@ -89,17 +103,7 @@ fn random_inputs(seed: u64, steps: usize) -> Vec<Input> {
         inputs.push(match rng.below(12) {
             0 => Input::Membership(random_membership(&mut rng)),
             1 => Input::LocalGame(random_game(&mut rng)),
-            2..=6 => Input::Presence(
-                Presence {
-                    device: dev(rng.below(24)),
-                    seq: rng.below(6),
-                    game: random_game(&mut rng),
-                    active_crew: (rng.below(2) == 0).then(|| crew(rng.below(5))),
-                    seated_since_ms: (rng.below(2) == 0).then(|| rng.below(1_000)),
-                    online_since_ms: rng.below(1_000),
-                },
-                now,
-            ),
+            2..=6 => Input::Presence(random_presence(&mut rng), now),
             7 => Input::Choose(crew(rng.below(5)), now),
             8 => Input::MyPresence,
             9 => Input::Remembered(
@@ -113,6 +117,12 @@ fn random_inputs(seed: u64, steps: usize) -> Vec<Input> {
                     .collect(),
             ),
             10 => Input::Request(dev(rng.below(24)), crew(rng.below(5))),
+            _ if snapshots => Input::Snapshot(
+                (0..rng.below(10))
+                    .map(|_| random_presence(&mut rng))
+                    .collect(),
+                now,
+            ),
             _ => Input::Tick(now),
         });
         // Always follow with a tick so the state is re-evaluated often.
@@ -272,6 +282,15 @@ fn run(inputs: &[Input], max_size: usize) -> Trace {
             Input::Presence(p, now) => {
                 let _ = m.on_presence(p, now);
             }
+            Input::Snapshot(members, now) => {
+                let listed: BTreeSet<DeviceId> = members.iter().map(|p| p.device).collect();
+                let out = m.apply_snapshot(members, now);
+                assert!(
+                    m.tracked_devices() <= listed.len(),
+                    "kept an unlisted device"
+                );
+                assert!(out.accepted + out.stale <= listed.len());
+            }
             Input::Choose(c, now) => {
                 let _ = m.choose_crew(c, now);
             }
@@ -327,7 +346,7 @@ fn random_sequences_hold_invariants_and_are_deterministic() {
     let mut saw_queued = false;
     for seed in 1..=200u64 {
         for max_size in [2, 5, MAX_SESSION_SIZE] {
-            let inputs = random_inputs(seed.wrapping_mul(0x9E37_79B9), 150);
+            let inputs = random_inputs(seed.wrapping_mul(0x9E37_79B9), 150, false);
             let first = run(&inputs, max_size);
             let second = run(&inputs, max_size);
             assert_eq!(first, second, "seed {seed} not deterministic");
@@ -342,4 +361,21 @@ fn random_sequences_hold_invariants_and_are_deterministic() {
     assert!(saw_active, "random inputs never produced an active session");
     assert!(saw_choice, "random inputs never produced a NeedsChoice");
     assert!(saw_queued, "random inputs never produced a Queued");
+}
+
+#[test]
+fn random_sequences_with_worker_snapshots_hold_invariants_and_are_deterministic() {
+    let mut saw_active = false;
+    for seed in 1..=200u64 {
+        for max_size in [2, 5, MAX_SESSION_SIZE] {
+            let inputs = random_inputs(seed.wrapping_mul(0x51_7CC1_B727), 150, true);
+            let first = run(&inputs, max_size);
+            let second = run(&inputs, max_size);
+            assert_eq!(first, second, "seed {seed} not deterministic");
+            saw_active |= first
+                .iter()
+                .any(|(_, state, _)| matches!(state, SessionState::Active { .. }));
+        }
+    }
+    assert!(saw_active, "random inputs never produced an active session");
 }
