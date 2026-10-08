@@ -25,14 +25,16 @@ use windows::Win32::System::Threading::{
 
 use super::output::{find_output_on_device, monitor_of, output_is_hdr, rect_of, sdr_white_nits};
 use super::rotate::{RotatePass, SAMPLE_1};
-use super::window::{init_dpi_awareness, thread_dpi_awareness, window_state};
+use super::window::{init_dpi_awareness, thread_dpi_awareness, window_owner, window_state};
 use super::{os_err, CapturedFrame, DeviceLock, FrameSink, OsContext, E_FAIL_HR};
 use crate::{
-    acquire_timeout_ms, placeholder_size, plan_crop, qpc_to_100ns, Backend, CaptureError,
-    CaptureOptions, CaptureStats, CropPlan, FocusTracker, FrameKind, GameTarget, MonotonicStamp,
-    PixelFormat, Rect, Rotation,
+    acquire_timeout_ms, placeholder_size, plan_crop, qpc_to_100ns, Backend, CaptureDecision,
+    CaptureError, CaptureOptions, CaptureStats, CropPlan, FocusTracker, FrameKind, GameTarget,
+    MonotonicStamp, PixelFormat, Rect, Rotation, SafeStreak, TargetIdentity, WindowState,
 };
 
+/// Refresh period assumed when the duplication does not report its rate (60 Hz), in 100 ns.
+const DEFAULT_REFRESH_100NS: i64 = 166_667;
 /// Number of output textures cycled by the backend.
 const RING_SIZE: usize = 3;
 /// Placeholder colour (linear RGBA; in FP16 scRGB it is just darker).
@@ -91,6 +93,10 @@ impl DdaCropBackend {
     /// Spawns the capture thread (MMCSS task "Capture", non-fatal if unavailable) and returns
     /// once the first duplication exists (or the secure desktop blocks it, which is retried).
     ///
+    /// The target's identity is pinned here (see [`TargetIdentity`]): `WindowNotFound` when the
+    /// window does not exist, its owner cannot be queried, or `target.pid` is non-zero and is not
+    /// the window's process. Nothing is duplicated in that case.
+    ///
     /// Errors: `WindowNotFound`, `Unsupported` (monitor on another adapter, already running),
     /// `TooManyDuplications`, `Os`.
     pub fn start(
@@ -107,6 +113,8 @@ impl DdaCropBackend {
             let _ = self.stop();
         }
         init_dpi_awareness();
+        let identity = TargetIdentity::pin(target.pid, window_owner(target.hwnd))
+            .ok_or(CaptureError::WindowNotFound)?;
         monitor_of(target.hwnd)?;
         if let Ok(mut s) = self.stats.lock() {
             *s = CaptureStats::default();
@@ -120,7 +128,16 @@ impl DdaCropBackend {
         let handle = std::thread::Builder::new()
             .name("duoclip-capture".into())
             .spawn(move || {
-                capture_thread(device, target, options, sink, stop_thread, stats, ready_tx)
+                capture_thread(
+                    device,
+                    target,
+                    identity,
+                    options,
+                    sink,
+                    stop_thread,
+                    stats,
+                    ready_tx,
+                )
             })
             .map_err(|e| CaptureError::Os {
                 context: format!("spawning the capture thread: {e}"),
@@ -192,9 +209,11 @@ impl Drop for Mmcss {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn capture_thread(
     device: ID3D11Device,
     target: GameTarget,
+    identity: TargetIdentity,
     options: CaptureOptions,
     mut sink: Box<dyn FrameSink>,
     stop: Arc<AtomicBool>,
@@ -203,7 +222,7 @@ fn capture_thread(
 ) {
     thread_dpi_awareness();
     let _mmcss = Mmcss::enter();
-    let mut cap = match Capture::new(device, target, options, shared) {
+    let mut cap = match Capture::new(device, target, identity, options, shared) {
         Ok(c) => c,
         Err(e) => {
             let _ = ready.send(Err(e));
@@ -237,6 +256,8 @@ struct Dup {
     desktop: Rect,
     rotation: Rotation,
     timeout_ms: u32,
+    /// One refresh period in 100 ns (margin of [`SafeStreak::allows`]).
+    refresh_100ns: i64,
     sdr_white_nits: f32,
 }
 
@@ -337,10 +358,14 @@ struct Capture {
     context: ID3D11DeviceContext,
     multithread: Option<ID3D11Multithread>,
     target: GameTarget,
+    /// Owner of the target window pinned at start; every sample and every delivery checks it.
+    identity: TargetIdentity,
     options: CaptureOptions,
     qpc_freq: i64,
     started: Instant,
     tracker: FocusTracker,
+    /// Start of the current run of samples that allowed copying.
+    streak: SafeStreak,
     stamp: MonotonicStamp,
     dup: Option<Dup>,
     /// While `dup` is None: when to try again, and whether the secure desktop blocks us.
@@ -364,6 +389,7 @@ impl Capture {
     fn new(
         device: ID3D11Device,
         target: GameTarget,
+        identity: TargetIdentity,
         options: CaptureOptions,
         shared: Arc<Mutex<CaptureStats>>,
     ) -> Result<Self, CaptureError> {
@@ -378,10 +404,12 @@ impl Capture {
             device,
             context,
             target,
+            identity,
             options,
             qpc_freq,
             started: now,
             tracker: FocusTracker::new(options.focus_grace_ms),
+            streak: SafeStreak::new(),
             stamp: MonotonicStamp::new(),
             dup: None,
             retry_at: now,
@@ -421,21 +449,31 @@ impl Capture {
         qpc_to_100ns(t, self.qpc_freq)
     }
 
-    /// Samples the window and runs the focus tracker.
-    fn sample(&mut self) -> (crate::WindowState, FrameKind, bool) {
-        let state = window_state(
-            self.target.hwnd,
-            self.target.pid,
-            self.options.require_foreground,
-        );
+    /// Samples the window (identity included), runs the focus tracker and records the sample in
+    /// the safe streak.
+    fn sample(&mut self) -> (WindowState, CaptureDecision, bool) {
+        let mut state = window_state(self.target.hwnd, &self.identity);
+        if self.options.test_only_copy_without_foreground && state.exists && !state.minimized {
+            // Privacy-unsafe test knob (see CaptureOptions): never set by the app.
+            state.foreground = true;
+        }
         let now = self.now_ms();
-        let (kind, changed) = self.tracker.update(&state, now);
-        (state, kind, changed)
+        let (decision, changed) = self.tracker.update(&state, now);
+        // Timestamp taken AFTER reading the window state: images presented from here on were
+        // composed after the state was observed.
+        let sampled_at = self.qpc_now_100ns();
+        self.streak.observe(decision, sampled_at);
+        (state, decision, changed)
+    }
+
+    /// The target is still the pinned window (checked right before handing pixels to the sink).
+    fn target_still_valid(&self) -> bool {
+        self.identity.matches(window_owner(self.target.hwnd))
     }
 
     fn first_open(&mut self) -> Result<(), CaptureError> {
-        let (_, kind, _) = self.sample();
-        if kind == FrameKind::Gone {
+        let (_, decision, _) = self.sample();
+        if decision == CaptureDecision::Gone {
             return Err(CaptureError::WindowNotFound);
         }
         let monitor = match self.tracker.monitor() {
@@ -508,6 +546,12 @@ impl Capture {
         // SAFETY: plain descriptor read on a valid duplication.
         let desc = unsafe { dupl.GetDesc() };
         let refresh = desc.ModeDesc.RefreshRate;
+        let refresh_100ns = if refresh.Numerator == 0 || refresh.Denominator == 0 {
+            DEFAULT_REFRESH_100NS
+        } else {
+            let p = 10_000_000i64 * i64::from(refresh.Denominator) / i64::from(refresh.Numerator);
+            p.clamp(1, 10_000_000)
+        };
         self.sdr_white_nits = if hdr {
             sdr_white_nits(&found.name).unwrap_or(80.0)
         } else {
@@ -518,6 +562,7 @@ impl Capture {
             desktop: rect_of(&found.desc),
             rotation: Rotation::from_dxgi(desc.Rotation.0),
             timeout_ms: acquire_timeout_ms(refresh.Numerator, refresh.Denominator),
+            refresh_100ns,
             sdr_white_nits: self.sdr_white_nits,
         });
         self.blocked = false;
@@ -547,8 +592,8 @@ impl Capture {
         if info.LastPresentTime != 0 {
             self.stats.new_images += 1;
         }
-        let (state, kind, changed) = self.sample();
-        if kind == FrameKind::Gone {
+        let (state, decision, changed) = self.sample();
+        if decision == CaptureDecision::Gone {
             return Err(CaptureError::WindowNotFound);
         }
         if changed {
@@ -557,8 +602,20 @@ impl Capture {
             self.switch_monitor();
             return Ok(());
         }
-        match kind {
-            FrameKind::Game if info.LastPresentTime != 0 => {
+        match decision {
+            CaptureDecision::CopyGame if info.LastPresentTime != 0 => {
+                let present_100ns = qpc_to_100ns(info.LastPresentTime, self.qpc_freq);
+                let (desktop, rotation, margin) = match &self.dup {
+                    Some(d) => (d.desktop, d.rotation, d.refresh_100ns),
+                    None => return frame.release(),
+                };
+                if !self.streak.allows(present_100ns, margin) {
+                    // Composed before the game was seen safe (e.g. just after it regained the
+                    // foreground): never copy it; the encoder repeats the last safe frame.
+                    self.stats.held_images += 1;
+                    drop(resource);
+                    return frame.release();
+                }
                 let Some(resource) = resource else {
                     return frame.release();
                 };
@@ -568,10 +625,6 @@ impl Capture {
                 // SAFETY: plain descriptor read into a local.
                 unsafe { surface.GetDesc(&mut desc) };
                 let format = pixel_format(desc.Format)?;
-                let (desktop, rotation) = match &self.dup {
-                    Some(d) => (d.desktop, d.rotation),
-                    None => return frame.release(),
-                };
                 let Some(plan) = plan_crop(state.rect, desktop, rotation, desc.Width, desc.Height)
                 else {
                     // Window not on this monitor (or < 2x2): never copy desktop pixels.
@@ -584,13 +637,16 @@ impl Capture {
                 drop(surface);
                 frame.release()?;
                 let micros = t0.elapsed().as_secs_f64() * 1e6;
+                // Re-validate the target right before handing pixels out (the handle may have
+                // been destroyed and reused during the copy).
+                if !self.target_still_valid() {
+                    return Err(CaptureError::WindowNotFound);
+                }
                 self.stats.add_copy_sample(micros, self.game_frames);
                 self.game_frames += 1;
                 self.last_size = Some((plan.upright_width, plan.upright_height));
                 self.last_format = desc.Format;
-                let qpc = self
-                    .stamp
-                    .stamp(qpc_to_100ns(info.LastPresentTime, self.qpc_freq));
+                let qpc = self.stamp.stamp(present_100ns);
                 self.stats.frames += 1;
                 let tex = &self.ring.slots[slot].0;
                 sink.on_frame(CapturedFrame {
@@ -608,8 +664,16 @@ impl Capture {
                 });
                 Ok(())
             }
-            FrameKind::Game => frame.release(),
-            FrameKind::OutOfFocus | FrameKind::Gone => {
+            CaptureDecision::CopyGame => frame.release(),
+            CaptureDecision::HoldLast => {
+                // Focus lost inside the grace: copy nothing, deliver nothing.
+                if info.LastPresentTime != 0 {
+                    self.stats.held_images += 1;
+                }
+                drop(resource);
+                frame.release()
+            }
+            CaptureDecision::Placeholder | CaptureDecision::Gone => {
                 drop(resource);
                 frame.release()?;
                 let rect = (!state.minimized).then_some(state.rect);
@@ -634,15 +698,15 @@ impl Capture {
             self.stats.timeouts += 1;
             self.acquire_failures = 0;
             // Static desktop: nothing to copy, but the focus can still change.
-            let (state, kind, changed) = self.sample();
-            if kind == FrameKind::Gone {
+            let (state, decision, changed) = self.sample();
+            if decision == CaptureDecision::Gone {
                 return Err(CaptureError::WindowNotFound);
             }
             if changed {
                 self.switch_monitor();
                 return Ok(());
             }
-            if kind == FrameKind::OutOfFocus {
+            if decision == CaptureDecision::Placeholder {
                 let rect = (!state.minimized).then_some(state.rect);
                 return self.emit_placeholder_rate_limited(sink, rect, MAX_PLACEHOLDER_FPS);
             }
@@ -688,8 +752,8 @@ impl Capture {
         sink: &mut dyn FrameSink,
         stop: &AtomicBool,
     ) -> Result<(), CaptureError> {
-        let (state, kind, _) = self.sample();
-        if kind == FrameKind::Gone {
+        let (state, decision, _) = self.sample();
+        if decision == CaptureDecision::Gone {
             return Err(CaptureError::WindowNotFound);
         }
         let now = Instant::now();

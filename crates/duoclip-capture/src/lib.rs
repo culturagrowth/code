@@ -8,7 +8,9 @@
 //!
 //! - **Portable logic** (unit-tested everywhere): [`Rect`], [`Rotation`], [`plan_crop`] (window in
 //!   desktop coordinates → rectangle in the native-orientation duplicated texture),
-//!   [`FocusTracker`] (game / placeholder / gone decision with focus debounce), stats, errors.
+//!   [`FocusTracker`] (copy / hold / placeholder / gone decision; the focus debounce never
+//!   authorizes a copy), [`TargetIdentity`] (the target window's owner, pinned at start),
+//!   [`SafeStreak`], stats, errors.
 //! - **Windows** (`cfg(windows)`): [`DdaCropBackend`], [`adapter_luid_for_window`],
 //!   [`exclude_from_capture`], [`list_outputs`].
 //!
@@ -39,7 +41,10 @@ mod types;
 mod win;
 
 pub use duoclip_gamesdb::Backend;
-pub use focus::{FocusTracker, FrameKind, WindowState, DEFAULT_FOCUS_GRACE_MS};
+pub use focus::{
+    CaptureDecision, FocusTracker, FrameKind, SafeStreak, TargetIdentity, WindowOwner, WindowState,
+    DEFAULT_FOCUS_GRACE_MS,
+};
 pub use geom::{desktop_to_texture, effective_rotation, plan_crop, CropPlan, Rect, Rotation};
 pub use stubs::{HookBackend, WgcBackend};
 pub use types::{
@@ -49,6 +54,6 @@ pub use types::{
 
 #[cfg(windows)]
 pub use win::{
-    adapter_luid_for_window, exclude_from_capture, init_dpi_awareness, list_outputs, window_state,
-    CapturedFrame, DdaCropBackend, FrameSink, OutputInfo,
+    adapter_luid_for_window, exclude_from_capture, init_dpi_awareness, list_outputs, window_owner,
+    window_state, CapturedFrame, DdaCropBackend, FrameSink, OutputInfo,
 };

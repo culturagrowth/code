@@ -130,8 +130,10 @@ pub struct CropPlan {
     pub upright_width: u32,
     /// Height of the upright crop (even).
     pub upright_height: u32,
-    /// The desktop rectangle the upright crop shows (window ∩ monitor, trimmed to even size).
-    /// Upright pixel `(x, y)` is desktop pixel `(desktop.left + x, desktop.top + y)`.
+    /// The desktop rectangle the upright crop shows (window ∩ monitor, trimmed to even size; with
+    /// a texture smaller than the monitor, only the part the clamped `src` still covers).
+    /// Upright pixel `(x, y)` is desktop pixel `(desktop.left + x, desktop.top + y)`, i.e.
+    /// `source_texel(x, y) == desktop_to_texture(desktop.left + x, desktop.top + y, ..)`.
     pub desktop: Rect,
 }
 
@@ -204,7 +206,9 @@ pub fn effective_rotation(
 /// than 2x2. The visible part is trimmed to even width/height on its right/bottom edges (in
 /// desktop space, so the upright crop keeps its top-left corner) and mapped into the texture;
 /// the result is clamped to the texture (a texture that does not match the monitor size never
-/// yields an out-of-bounds rectangle). See [`effective_rotation`] for an already-upright texture.
+/// yields an out-of-bounds rectangle) and `desktop` is recomputed from the clamped `src` by the
+/// inverse transform, so the pixel correspondence holds in that defensive path too. See
+/// [`effective_rotation`] for an already-upright texture.
 pub fn plan_crop(
     window: Rect,
     monitor: Rect,
@@ -255,13 +259,28 @@ pub fn plan_crop(
     } else {
         (w as u32, h as u32)
     };
-    // The desktop rect shown, consistent with the (possibly clamped) upright size.
-    let desktop = Rect {
-        left: vis.left,
-        top: vis.top,
-        right: i32::try_from(i64::from(vis.left) + i64::from(uw)).ok()?,
-        bottom: i32::try_from(i64::from(vis.top) + i64::from(uh)).ok()?,
+    // The desktop rect shown: the inverse transform (Microsoft sample's texture → desktop
+    // formulas) of the src actually copied. Equal to the trimmed visible rect when the texture
+    // matches the monitor; after a clamp (texture smaller than the monitor) it follows the texels
+    // that remain, whichever desktop edge they are on for this rotation.
+    let (sl, st, sr, sb) = (l, t, l + w, t + h);
+    let (dl, dt, dr, db) = match rotation {
+        Rotation::Identity => (sl, st, sr, sb),
+        Rotation::Rotate90 => (mw - sb, sl, mw - st, sr),
+        Rotation::Rotate180 => (mw - sr, mh - sb, mw - sl, mh - st),
+        Rotation::Rotate270 => (st, mh - sr, sb, mh - sl),
     };
+    let (ml, mt) = (i64::from(monitor.left), i64::from(monitor.top));
+    let desktop = Rect {
+        left: i32::try_from(ml + dl).ok()?,
+        top: i32::try_from(mt + dt).ok()?,
+        right: i32::try_from(ml + dr).ok()?,
+        bottom: i32::try_from(mt + db).ok()?,
+    };
+    // Invariants (cheap; a violation would mean a bug, so refuse to plan rather than mis-crop).
+    if desktop.width() != uw || desktop.height() != uh || desktop.intersect(&vis) != desktop {
+        return None;
+    }
     Some(CropPlan {
         src,
         rotation,
@@ -560,26 +579,7 @@ mod tests {
                     let Some(p) = plan_crop(win, mon, rot, tw, th) else {
                         continue;
                     };
-                    assert!(p.src.right as u32 <= tw && p.src.bottom as u32 <= th);
-                    assert!(p.src.left >= 0 && p.src.top >= 0);
-                    let mut checked = 0;
-                    for y in (0..p.upright_height)
-                        .step_by(7)
-                        .chain([p.upright_height - 1])
-                    {
-                        for x in (0..p.upright_width).step_by(5).chain([p.upright_width - 1]) {
-                            let dx = p.desktop.left + x as i32;
-                            let dy = p.desktop.top + y as i32;
-                            let want = desktop_to_texture(dx, dy, mon, rot).unwrap();
-                            let got = p.source_texel(x, y).unwrap();
-                            assert_eq!(got, want, "{mon:?} {rot:?} {win:?} at ({x},{y})");
-                            assert!(p.src.contains(got.0 as i32, got.1 as i32));
-                            checked += 1;
-                        }
-                    }
-                    assert!(checked > 0);
-                    assert!(p.source_texel(p.upright_width, 0).is_none());
-                    assert!(p.source_texel(0, p.upright_height).is_none());
+                    assert_plan_consistent(&p, win, mon, rot, tw, th);
                 }
             }
         }
@@ -626,6 +626,108 @@ mod tests {
             720
         )
         .is_none());
+    }
+
+    /// CAP-3, the reviewer's repro: monitor/window (0,0,100,100), Rotate180, texture 50x100.
+    /// The clamped src (0,0,50,100) shows the desktop's right half.
+    #[test]
+    fn mismatched_texture_rotate180_desktop_follows_the_clamp() {
+        let r = Rect::new(0, 0, 100, 100);
+        let p = plan_crop(r, r, Rotation::Rotate180, 50, 100).unwrap();
+        assert_eq!(p.src, Rect::new(0, 0, 50, 100));
+        assert_eq!(p.desktop, Rect::new(50, 0, 100, 100));
+        assert_eq!(p.source_texel(0, 0), Some((49, 99)));
+        assert_eq!(
+            desktop_to_texture(p.desktop.left, p.desktop.top, r, Rotation::Rotate180),
+            Some((49, 99))
+        );
+    }
+
+    /// Checks the contract of a plan: src inside the texture, even sizes, desktop inside
+    /// window ∩ monitor with the upright size, and every sampled upright pixel showing exactly
+    /// the texel of its desktop pixel.
+    fn assert_plan_consistent(p: &CropPlan, win: Rect, mon: Rect, rot: Rotation, tw: u32, th: u32) {
+        let ctx = format!("{mon:?} {rot:?} {win:?} texture {tw}x{th} → {p:?}");
+        assert!(p.src.left >= 0 && p.src.top >= 0, "{ctx}");
+        assert!(
+            p.src.right as u32 <= tw && p.src.bottom as u32 <= th,
+            "{ctx}"
+        );
+        assert_eq!(p.upright_width % 2, 0, "{ctx}");
+        assert_eq!(p.upright_height % 2, 0, "{ctx}");
+        assert_eq!(
+            (p.desktop.width(), p.desktop.height()),
+            (p.upright_width, p.upright_height),
+            "{ctx}"
+        );
+        let vis = win.intersect(&mon);
+        assert_eq!(p.desktop.intersect(&vis), p.desktop, "{ctx}");
+        let mut checked = 0;
+        for y in (0..p.upright_height)
+            .step_by(7)
+            .chain([p.upright_height - 1])
+        {
+            for x in (0..p.upright_width).step_by(5).chain([p.upright_width - 1]) {
+                let dx = p.desktop.left + x as i32;
+                let dy = p.desktop.top + y as i32;
+                let want = desktop_to_texture(dx, dy, mon, p.rotation).unwrap();
+                let got = p.source_texel(x, y).unwrap();
+                assert_eq!(got, want, "{ctx} at ({x},{y})");
+                assert!(p.src.contains(got.0 as i32, got.1 as i32), "{ctx}");
+                assert!(got.0 < tw && got.1 < th, "{ctx}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+        assert!(p.source_texel(p.upright_width, 0).is_none());
+        assert!(p.source_texel(0, p.upright_height).is_none());
+    }
+
+    /// The pixel correspondence also holds when the texture does not match the monitor
+    /// (smaller, larger, one side only, odd sizes), for every rotation.
+    #[test]
+    fn mismatched_textures_keep_the_pixel_correspondence() {
+        let monitors = [
+            Rect::new(0, 0, 100, 100),
+            Rect::new(0, 0, 1920, 1080),
+            PORTRAIT,
+            Rect::new(-37, 11, 293, 211),
+        ];
+        let windows = [
+            Rect::new(0, 0, 100, 100),
+            Rect::new(-900, -100, -300, 700),
+            Rect::new(-1200, -500, 40, 2000),
+            Rect::new(10, 20, 1500, 1000),
+            Rect::new(-37, 11, 293, 211),
+            Rect::new(30, 40, 77, 91),
+        ];
+        let mut planned = 0;
+        for mon in monitors {
+            for rot in ALL {
+                let (nw, nh) = native(mon, rot);
+                let textures = [
+                    (nw, nh),
+                    (nw / 2, nh),
+                    (nw, nh / 2),
+                    (nw / 2, nh / 3),
+                    (nw / 2 + 1, nh / 3 + 1),
+                    (nw + 64, nh + 32),
+                    (nh, nw),
+                    (3, 3),
+                    (1, 1),
+                    (0, nh),
+                ];
+                for (tw, th) in textures {
+                    for win in windows {
+                        if let Some(p) = plan_crop(win, mon, rot, tw, th) {
+                            assert_plan_consistent(&p, win, mon, rot, tw, th);
+                            planned += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(planned > 100, "only {planned} plans exercised");
     }
 
     #[test]

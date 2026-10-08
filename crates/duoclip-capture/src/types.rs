@@ -24,6 +24,9 @@ pub struct CaptureStats {
     pub access_lost: u64,
     /// Placeholder frames handed to the sink.
     pub out_of_focus_frames: u64,
+    /// New desktop images deliberately not copied: focus lost inside the grace (`HoldLast`), or
+    /// the image was presented before the current safe run started (see `SafeStreak`).
+    pub held_images: u64,
     /// Times the duplication moved to another monitor.
     pub monitor_switches: u64,
     /// Average CPU time (µs) to submit the crop copy (copy / rotation pass) per game frame.
@@ -70,30 +73,38 @@ pub enum CaptureError {
 pub struct GameTarget {
     /// `HWND` of the game window (as an integer).
     pub hwnd: isize,
-    /// Process id of the game (0 = unknown). When known, a foreground window of the same process
-    /// (e.g. a game launcher popup) also counts as "game in foreground".
+    /// Process id of the game (0 = unknown). When non-zero, the window must belong to this process
+    /// (checked at start and at every sample), and a foreground window of the same process (e.g.
+    /// a game launcher popup) also counts as "game in foreground". When 0, the owner process and
+    /// thread observed at start are pinned instead (see [`crate::TargetIdentity`]).
     pub pid: u32,
 }
 
 /// Tuning of a capture backend (additive to the SPEC; defaults follow the SPEC).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaptureOptions {
-    /// Focus loss shorter than this still counts as game (default 250 ms).
+    /// Focus loss shorter than this is reported as `Game` to the UI but delivers no new frame
+    /// (the encoder repeats the last safe one); longer → placeholders (default 250 ms). It never
+    /// authorizes copying desktop pixels.
     pub focus_grace_ms: u64,
-    /// When `false`, a visible (not minimized) window counts as focused even if it is not the
-    /// foreground window (windowed games watched while chatting on another monitor; tests).
-    /// Default `true` (the SPEC behaviour).
-    pub require_foreground: bool,
     /// Placeholder rate while the secure desktop (UAC, Ctrl+Alt+Del) blocks the duplication.
     pub blocked_placeholder_fps: u32,
+    /// **Test-only, unsafe for privacy. Never set it in the app.** When `true`, a visible (not
+    /// minimized/hidden/cloaked) target window counts as foreground. Desktop Duplication copies
+    /// the composed desktop, so anything covering the window (another app, a notification) is
+    /// then copied into the frames, for as long as the capture runs. It exists only as an
+    /// explicit opt-in fallback for the hardware tests when their test window cannot take the
+    /// foreground. Default `false`.
+    #[doc(hidden)]
+    pub test_only_copy_without_foreground: bool,
 }
 
 impl Default for CaptureOptions {
     fn default() -> Self {
         Self {
             focus_grace_ms: DEFAULT_FOCUS_GRACE_MS,
-            require_foreground: true,
             blocked_placeholder_fps: 10,
+            test_only_copy_without_foreground: false,
         }
     }
 }
@@ -232,6 +243,8 @@ mod tests {
     fn default_options() {
         let o = CaptureOptions::default();
         assert_eq!(o.focus_grace_ms, 250);
-        assert!(o.require_foreground);
+        assert_eq!(o.blocked_placeholder_fps, 10);
+        // The privacy-unsafe test knob is never on by default.
+        assert!(!o.test_only_copy_without_foreground);
     }
 }

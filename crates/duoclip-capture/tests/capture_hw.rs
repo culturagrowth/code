@@ -6,21 +6,31 @@
 //! popup filled with four colour blocks (red, green, blue, white) over a black strip with a
 //! moving yellow bar (the animation makes the desktop change so Desktop Duplication delivers
 //! frames). Only that window's crop is ever copied or read back; the end-to-end test writes it
-//! (and nothing else) to `test-output/capture/`. Something else drawn on top of the test window
-//! (another top-most window, a notification toast) would end up in the crop, so the user should
-//! not move windows over it during the ~3 s of each test.
+//! (and nothing else) to `test-output/capture/`.
+//!
+//! **Foreground:** the capturing tests use the backend's safe defaults: the crop is copied only
+//! while the test window is the foreground window. Each test makes its window the foreground
+//! window (`SetForegroundWindow`) and asserts it. Windows may refuse the foreground to a process
+//! that did not receive the last input; then the test fails with a message. Only if the user
+//! agrees, they can be re-run with `DUOCLIP_CAPTURE_TEST_ALLOW_BACKGROUND=1`, which switches to the
+//! hidden, privacy-unsafe `CaptureOptions::test_only_copy_without_foreground` knob: the visible
+//! test window then counts as foreground, and anything drawn over it (another top-most window, a
+//! notification toast) would end up in the crop. Clicking another window during a strict test
+//! turns the frames into hold/placeholders and makes it fail.
 //!
 //! Run (only after the user confirms), one at a time:
 //! `cargo test -p duoclip-capture --test capture_hw -- --ignored --nocapture --test-threads=1`
 //!
 //! `outputs_and_adapter_luid_without_capture` does not capture anything (it only lists DXGI
-//! outputs and resolves the adapter of the desktop window).
+//! outputs and resolves the adapter of the desktop window); `identity_mismatch_rejected_without_capture`
+//! does not capture anything either (invisible message-only window; `start` must refuse it before
+//! any duplication exists).
 
 #![cfg(windows)]
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -81,11 +91,30 @@ fn fill(hdc: windows::Win32::Graphics::Gdi::HDC, rect: RECT, rgb: (u8, u8, u8)) 
     }
 }
 
-/// Draws the pattern; `frame` moves the yellow bar in the bottom strip.
-fn draw(hwnd: HWND, frame: u32) {
+/// Colour of the cover window used by the focus-loss test (magenta: not in the pattern).
+const COVER_RGB: (u8, u8, u8) = (255, 0, 255);
+
+/// Draws the pattern (or, for a cover window, solid magenta); `frame` moves the yellow bar in
+/// the bottom strip.
+fn draw(hwnd: HWND, frame: u32, cover: bool) {
     // SAFETY: DC of our own window, released below.
     let hdc = unsafe { GetDC(Some(hwnd)) };
     if hdc.is_invalid() {
+        return;
+    }
+    if cover {
+        fill(
+            hdc,
+            RECT {
+                left: 0,
+                top: 0,
+                right: WIN_W,
+                bottom: WIN_H,
+            },
+            COVER_RGB,
+        );
+        // SAFETY: releasing the DC obtained above.
+        unsafe { ReleaseDC(Some(hwnd), hdc) };
         return;
     }
     for (k, rgb) in BLOCKS.iter().enumerate() {
@@ -135,6 +164,39 @@ struct TestWindow {
 
 impl TestWindow {
     fn create(x: i32, y: i32) -> TestWindow {
+        Self::create_kind(x, y, false)
+    }
+
+    /// A solid magenta top-most window, created HIDDEN (see [`TestWindow::show`]); used to take
+    /// the foreground from, and then cover, a test window in the focus-loss test.
+    fn create_cover(x: i32, y: i32) -> TestWindow {
+        Self::create_kind(x, y, true)
+    }
+
+    /// Shows a window created hidden.
+    fn show(&self) {
+        // SAFETY: our own window (owned by another thread of this process: ShowWindow sends it
+        // the messages and waits).
+        let _ = unsafe { ShowWindow(self.h(), SW_SHOW) };
+    }
+
+    /// Moves the window without resizing, re-ordering or activating it.
+    fn move_to(&self, x: i32, y: i32) {
+        // SAFETY: our own window; plain position change.
+        let _ = unsafe {
+            SetWindowPos(
+                self.h(),
+                None,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        };
+    }
+
+    fn create_kind(x: i32, y: i32, cover: bool) -> TestWindow {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_t = stop.clone();
         let (tx, rx) = mpsc::channel::<isize>();
@@ -157,7 +219,11 @@ impl TestWindow {
                     WS_EX_TOPMOST,
                     class,
                     w!("DuoClip capture test"),
-                    WS_POPUP | WS_VISIBLE | WS_SYSMENU | WS_MINIMIZEBOX,
+                    if cover {
+                        WS_POPUP | WS_SYSMENU
+                    } else {
+                        WS_POPUP | WS_VISIBLE | WS_SYSMENU | WS_MINIMIZEBOX
+                    },
                     x,
                     y,
                     WIN_W,
@@ -176,7 +242,7 @@ impl TestWindow {
                         let _ = TranslateMessage(&msg);
                         DispatchMessageW(&msg);
                     }
-                    draw(hwnd, frame);
+                    draw(hwnd, frame, cover);
                     frame = frame.wrapping_add(1);
                     if DwmFlush().is_err() {
                         std::thread::sleep(Duration::from_millis(5));
@@ -211,6 +277,39 @@ impl TestWindow {
             let _ = ShowWindowAsync(self.h(), SW_RESTORE);
             let _ = SetForegroundWindow(self.h());
         }
+    }
+
+    /// `true` when this window is the foreground window now.
+    fn is_foreground(&self) -> bool {
+        // SAFETY: plain query.
+        let fg = unsafe { GetForegroundWindow() };
+        fg == self.h()
+    }
+
+    /// Asks Windows to make this window the foreground window and waits up to 2 s for it.
+    /// Windows can refuse it (foreground lock: the process did not receive the last input).
+    fn take_foreground(&self) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            // SAFETY: plain calls on our own window; failures are only reported by the check.
+            unsafe {
+                let _ = SetForegroundWindow(self.h());
+                let _ = BringWindowToTop(self.h());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            if self.is_foreground() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+        }
+    }
+
+    /// Current state (identity pinned from the handle; `pid` 0 = only this window counts).
+    fn state(&self) -> WindowState {
+        let id = TargetIdentity::pin(0, window_owner(self.hwnd)).expect("test window owner");
+        window_state(self.hwnd, &id)
     }
 
     fn target(&self) -> GameTarget {
@@ -504,19 +603,55 @@ fn device_for(win: &TestWindow) -> GpuDevice {
     dev
 }
 
-/// Hardware-test options: a visible window counts as focused, so the user clicking another
-/// window (e.g. the terminal) during the test does not turn frames into placeholders. The
-/// foreground logic itself is covered by the FocusTracker unit tests.
-fn test_options() -> CaptureOptions {
-    CaptureOptions {
-        require_foreground: false,
-        ..CaptureOptions::default()
+/// Opt-in fallback (only with the user's agreement) when Windows refuses the foreground.
+const ALLOW_BACKGROUND_ENV: &str = "DUOCLIP_CAPTURE_TEST_ALLOW_BACKGROUND";
+
+fn background_allowed() -> bool {
+    std::env::var(ALLOW_BACKGROUND_ENV).is_ok_and(|v| v == "1")
+}
+
+/// Capture mode of a test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// Safe defaults; the test window was made the foreground window (asserted).
+    Strict,
+    /// Hidden test-only knob (explicit opt-in through the environment variable).
+    Background,
+}
+
+/// Makes `win` the foreground window and returns the safe default options (`Mode::Strict`).
+/// If Windows refuses the foreground, panics, unless `DUOCLIP_CAPTURE_TEST_ALLOW_BACKGROUND=1`
+/// opts into the privacy-unsafe test knob (`Mode::Background`).
+fn test_options(win: &TestWindow) -> (CaptureOptions, Mode) {
+    if win.take_foreground() {
+        assert!(
+            win.is_foreground(),
+            "the test window must be the foreground window"
+        );
+        println!("mode: strict (test window is the foreground window; safe default options)");
+        return (CaptureOptions::default(), Mode::Strict);
     }
+    assert!(
+        background_allowed(),
+        "Windows refused the foreground to the test window (foreground lock). Re-run when this \
+         process may take the foreground, or, only with the user's agreement, set \
+         {ALLOW_BACKGROUND_ENV}=1 to use the privacy-unsafe test-only knob"
+    );
+    println!(
+        "mode: BACKGROUND ({ALLOW_BACKGROUND_ENV}=1): the visible test window counts as foreground; \
+         anything drawn over it would be captured"
+    );
+    (
+        CaptureOptions {
+            test_only_copy_without_foreground: true,
+            ..CaptureOptions::default()
+        },
+        Mode::Background,
+    )
 }
 
 fn expected_crop(win: &TestWindow, monitor: Rect) -> (u32, u32) {
-    let st = window_state(win.hwnd, 0, false);
-    let vis = st.rect.intersect(&monitor);
+    let vis = win.state().rect.intersect(&monitor);
     (vis.width() & !1, vis.height() & !1)
 }
 
@@ -576,9 +711,85 @@ fn outputs_and_adapter_luid_without_capture() {
         adapter_luid_for_window(0),
         Err(CaptureError::WindowNotFound)
     ));
-    let st = window_state(desktop.0 as isize, 0, true);
+    let owner = window_owner(desktop.0 as isize);
+    println!("desktop window owner: {owner:?}");
+    let id = TargetIdentity::pin(0, owner).expect("owner of the desktop window");
+    let st = window_state(desktop.0 as isize, &id);
     println!("desktop window state: {st:?}");
     assert!(st.exists);
+}
+
+/// Counts frames; never reads pixels.
+struct CountSink(Arc<AtomicU64>);
+
+impl FrameSink for CountSink {
+    fn on_frame(&mut self, _frame: CapturedFrame<'_>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn on_error(&mut self, _err: CaptureError) {}
+}
+
+/// CAP-2 through the backend: `start` refuses a window that does not belong to
+/// `GameTarget::pid` before any duplication exists. Uses an invisible message-only window (not on
+/// any desktop image) and only mismatching / invalid targets, so nothing is ever duplicated.
+#[test]
+#[ignore = "needs a GPU (creates a D3D11 device) and a desktop session; captures nothing"]
+fn identity_mismatch_rejected_without_capture() {
+    let _g = hw_lock();
+    // SAFETY: message-only window of the predefined STATIC class on this thread, destroyed below.
+    let h = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            None,
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            None,
+            None,
+        )
+    }
+    .expect("message-only window");
+    let raw = h.0 as isize;
+    let pid = std::process::id();
+    let owner = window_owner(raw).expect("owner");
+    assert_eq!(owner.pid, pid);
+    // Never 0 (0 would mean "unknown pid" and pin the handle) and never our pid.
+    let wrong_pid = pid.wrapping_add(4).max(1);
+    assert_ne!(wrong_pid, pid);
+    let dev = create_device(None).expect("create_device");
+    let frames = Arc::new(AtomicU64::new(0));
+    let mut backend = DdaCropBackend::new(dev.device.clone());
+    let r = backend.start(
+        GameTarget {
+            hwnd: raw,
+            pid: wrong_pid,
+        },
+        Box::new(CountSink(frames.clone())),
+    );
+    println!("start with a mismatching pid: {r:?}");
+    assert!(matches!(r, Err(CaptureError::WindowNotFound)), "{r:?}");
+    assert!(!backend.is_running());
+    assert!(matches!(backend.stop(), Err(CaptureError::Stopped)));
+    let r = backend.start(
+        GameTarget { hwnd: 0, pid: 0 },
+        Box::new(CountSink(frames.clone())),
+    );
+    assert!(matches!(r, Err(CaptureError::WindowNotFound)), "{r:?}");
+    assert_eq!(frames.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stats(), CaptureStats::default());
+    // SAFETY: our own window, on the thread that created it.
+    unsafe { DestroyWindow(h) }.expect("DestroyWindow");
+    // Destroyed: no owner any more, so no identity can be pinned or matched.
+    assert_eq!(window_owner(raw), None);
+    assert!(!TargetIdentity::pin(pid, Some(owner))
+        .unwrap()
+        .matches(window_owner(raw)));
 }
 
 #[test]
@@ -597,11 +808,14 @@ fn identity_monitor_capture_rate_pixels_and_qpc() {
         out: recorded.clone(),
         wants: vec![(FrameKind::Game, t0 + Duration::from_millis(1000), false)],
     };
-    let mut backend = DdaCropBackend::with_options(dev.device.clone(), test_options());
+    let (options, mode) = test_options(&win);
+    let mut backend = DdaCropBackend::with_options(dev.device.clone(), options);
     backend.start(win.target(), Box::new(sink)).expect("start");
     std::thread::sleep(Duration::from_secs(3));
+    let still_foreground = win.is_foreground();
     let stats = backend.stop().expect("stop");
     let elapsed = t0.elapsed().as_secs_f64();
+    println!("mode {mode:?}; test window still foreground at the end: {still_foreground}");
     let rec = recorded.lock().unwrap();
     println!("stats: {stats:?}");
     println!("errors: {:?}", rec.errors);
@@ -663,18 +877,24 @@ fn minimize_gives_placeholders_and_restore_gives_game() {
             ),
         ],
     };
-    let mut backend = DdaCropBackend::with_options(dev.device.clone(), test_options());
+    let (options, mode) = test_options(&win);
+    let mut backend = DdaCropBackend::with_options(dev.device.clone(), options);
     backend.start(win.target(), Box::new(sink)).expect("start");
     std::thread::sleep(t_min.saturating_duration_since(Instant::now()));
     win.minimize();
     std::thread::sleep(t_restore.saturating_duration_since(Instant::now()));
     win.restore();
-    std::thread::sleep(Duration::from_millis(1200));
-    let fg = window_state(win.hwnd, std::process::id(), true);
-    println!(
-        "after restore: foreground = {} (informative), state {fg:?}",
-        fg.foreground
-    );
+    // Strict mode: the restored window must be the foreground window again to be copied.
+    let regained = win.take_foreground();
+    std::thread::sleep(Duration::from_millis(1000));
+    let fg = win.state();
+    println!("mode {mode:?}; after restore: foreground regained = {regained}, state {fg:?}");
+    if mode == Mode::Strict {
+        assert!(
+            regained,
+            "Windows refused the foreground to the restored test window; see the module docs"
+        );
+    }
     let stats = backend.stop().expect("stop");
     let rec = recorded.lock().unwrap();
     println!("stats: {stats:?}");
@@ -899,9 +1119,14 @@ fn end_to_end_capture_encode_mux_mp4() {
         state: None,
         out: output.clone(),
     };
-    let mut backend = DdaCropBackend::with_options(dev.device.clone(), test_options());
+    let (options, mode) = test_options(&win);
+    let mut backend = DdaCropBackend::with_options(dev.device.clone(), options);
     backend.start(win.target(), Box::new(sink)).expect("start");
     std::thread::sleep(Duration::from_secs(3));
+    println!(
+        "mode {mode:?}; test window still foreground at the end: {}",
+        win.is_foreground()
+    );
     // Joins the capture thread, which drops (and so drains) the sink.
     let stats = backend.stop().expect("stop");
     drop(backend);
@@ -1048,7 +1273,9 @@ fn rotated_monitor_report() {
         out: recorded.clone(),
         wants: vec![(FrameKind::Game, t0 + Duration::from_millis(800), false)],
     };
-    let mut backend = DdaCropBackend::with_options(dev.device.clone(), test_options());
+    let (options, mode) = test_options(&win);
+    println!("REPORT: mode {mode:?}");
+    let mut backend = DdaCropBackend::with_options(dev.device.clone(), options);
     if let Err(e) = backend.start(win.target(), Box::new(sink)) {
         println!("REPORT: start failed: {e}");
         return;
@@ -1102,7 +1329,9 @@ fn hdr_monitor_report() {
         out: recorded.clone(),
         wants: vec![(FrameKind::Game, t0 + Duration::from_millis(800), false)],
     };
-    let mut backend = DdaCropBackend::with_options(dev.device.clone(), test_options());
+    let (options, mode) = test_options(&win);
+    println!("REPORT: mode {mode:?}");
+    let mut backend = DdaCropBackend::with_options(dev.device.clone(), options);
     if let Err(e) = backend.start(win.target(), Box::new(sink)) {
         println!("REPORT: start failed: {e}");
         return;
@@ -1127,4 +1356,137 @@ fn hdr_monitor_report() {
         Ok(()) => println!("REPORT: HDR pattern hues correct"),
         Err(e) => println!("REPORT: HDR pattern MISMATCH: {e}"),
     }
+}
+
+/// CAP-1 on real hardware: focus lost WITHOUT minimizing, then another window covering the game.
+///
+/// 1. 0.8 s of game (test window in the foreground; the target uses `pid = 0`, so only the test
+///    window itself counts as "game in foreground").
+/// 2. A solid magenta top-most window of this process (created hidden, beside the test window,
+///    not overlapping it) is shown and takes the foreground; once it has it, it is moved exactly
+///    over the test window. Expected: no game frame delivered after the switch, nothing at all
+///    delivered inside the 250 ms grace (hold), placeholders after it.
+/// 3. The cover is destroyed and the test window takes the foreground back: game frames again,
+///    with the pattern and no magenta.
+#[test]
+#[ignore = "captures the screen: run only after the user confirms"]
+fn focus_loss_without_minimize_holds_then_placeholders() {
+    let _g = hw_lock();
+    init_dpi_awareness();
+    let out = identity_output();
+    let (x, y) = (out.desktop.left + 200, out.desktop.top + 180);
+    let win = TestWindow::create(x, y);
+    let dev = device_for(&win);
+    // Hidden until the switch; created now so its ~500 ms creation wait is not inside the test.
+    let cover = TestWindow::create_cover(x + WIN_W + 40, y);
+    let (options, mode) = test_options(&win);
+    if mode == Mode::Background {
+        println!(
+            "skipped: needs the strict (foreground) mode; the background knob would copy the cover"
+        );
+        return;
+    }
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let t0 = Instant::now();
+    let t_cover = t0 + Duration::from_millis(800);
+    let t_back = t_cover + Duration::from_millis(1500);
+    let sink = Recorder {
+        dev: dev.clone(),
+        out: recorded.clone(),
+        wants: vec![
+            (
+                FrameKind::OutOfFocus,
+                t_cover + Duration::from_millis(800),
+                false,
+            ),
+            (FrameKind::Game, t_back + Duration::from_millis(700), false),
+        ],
+    };
+    let target = GameTarget {
+        hwnd: win.hwnd,
+        pid: 0,
+    };
+    let mut backend = DdaCropBackend::with_options(dev.device.clone(), options);
+    backend.start(target, Box::new(sink)).expect("start");
+    std::thread::sleep(t_cover.saturating_duration_since(Instant::now()));
+    let t_switch = Instant::now();
+    cover.show();
+    let cover_fg = cover.take_foreground();
+    let t_switched = Instant::now();
+    if cover_fg {
+        // Only once the test window lost the foreground: cover it.
+        cover.move_to(x, y);
+    }
+    println!(
+        "cover window foreground: {cover_fg} (switch took {:.0} ms)",
+        (t_switched - t_switch).as_secs_f64() * 1e3
+    );
+    std::thread::sleep(t_back.saturating_duration_since(Instant::now()));
+    drop(cover);
+    let back_fg = win.take_foreground();
+    let t_resumed = Instant::now();
+    std::thread::sleep(Duration::from_millis(1200));
+    let stats = backend.stop().expect("stop");
+    let end = Instant::now();
+    let rec = recorded.lock().unwrap();
+    println!("stats: {stats:?}");
+    println!("errors: {:?}", rec.errors);
+    assert!(cover_fg, "the cover window could not take the foreground");
+    assert!(
+        back_fg,
+        "the test window could not take the foreground back"
+    );
+    assert!(rec.errors.is_empty(), "errors: {:?}", rec.errors);
+    let count = |from: Instant, to: Instant, kind: FrameKind| {
+        rec.frames
+            .iter()
+            .filter(|f| f.at >= from && f.at < to && f.kind == kind)
+            .count()
+    };
+    let grace = Duration::from_millis(DEFAULT_FOCUS_GRACE_MS);
+    let before = count(t0, t_switch, FrameKind::Game);
+    // A frame copied just before the switch may still be delivered: count from 50 ms after the
+    // cover was confirmed in the foreground.
+    let lost_from = t_switched + Duration::from_millis(50);
+    let game_lost = count(lost_from, t_back, FrameKind::Game);
+    // The focus was lost at or after t_switch, so no placeholder may come before
+    // t_switch + grace (hold: nothing delivered at all).
+    let early_placeholders = count(
+        t_switch,
+        t_switch + grace - Duration::from_millis(30),
+        FrameKind::OutOfFocus,
+    );
+    let placeholders = count(
+        t_switched + grace + Duration::from_millis(100),
+        t_back,
+        FrameKind::OutOfFocus,
+    );
+    let after = count(t_resumed + Duration::from_millis(300), end, FrameKind::Game);
+    println!(
+        "game before {before}, game after losing the focus {game_lost}, placeholders inside the \
+         grace {early_placeholders}, placeholders after the grace {placeholders}, game after \
+         resume {after}, held images {}",
+        stats.held_images
+    );
+    assert!(before >= 5, "no game frames before the switch");
+    assert_eq!(game_lost, 0, "game frames delivered without the foreground");
+    assert_eq!(
+        early_placeholders, 0,
+        "placeholders inside the grace (expected a hold)"
+    );
+    assert!(placeholders >= 5, "no placeholders after the grace");
+    assert!(after >= 5, "no game frames after the test window came back");
+    assert_strictly_increasing(&rec.frames);
+    let ph = rec
+        .samples
+        .iter()
+        .find(|s| s.kind == FrameKind::OutOfFocus)
+        .expect("placeholder read back");
+    check_placeholder(ph).expect("placeholder colour");
+    let game = rec
+        .samples
+        .iter()
+        .find(|s| s.kind == FrameKind::Game)
+        .expect("game frame read back after resume");
+    check_pattern(game).expect("pattern after resume (no magenta)");
 }

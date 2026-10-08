@@ -36,20 +36,50 @@ pub struct CropPlan { pub src: Rect /* in texture coords */, pub rotation: Rotat
 pub fn plan_crop(window: Rect, monitor: Rect, rotation: Rotation, texture_w: u32, texture_h: u32) -> Option<CropPlan>;
 
 /// What the game window looks like right now (sampled once per captured frame by the Windows code).
+/// `exists` = the window exists AND is still the target (same owner process + thread as pinned at start, see TargetIdentity).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowState { pub exists: bool, pub minimized: bool, pub foreground: bool, pub rect: Rect, pub monitor: u64 /* opaque HMONITOR */ }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameKind { Game, OutOfFocus /* game not in foreground or minimized: emit the placeholder */, Gone /* window destroyed */ }
 
-/// Pure decision of what to emit and when the duplication must move to another monitor. Debounces focus flicker:
-/// focus lost for < `focus_grace_ms` (default 250 ms) still counts as Game (alt-tab flashes, overlays taking focus for a moment).
+/// What to do for one sample. "May desktop pixels be copied" is separate from what the UI is told (`kind()`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureDecision {
+    CopyGame,    // foreground + visible AT THIS SAMPLE: the crop may be copied          kind() = Game
+    HoldLast,    // focus lost < grace ago: copy nothing, deliver NO frame (the encoder's
+                 // FramePacer repeats the last safe frame)                               kind() = Game
+    Placeholder, // minimized/hidden/cloaked, or focus lost ≥ grace: placeholder          kind() = OutOfFocus
+    Gone,        // window gone or no longer the target: stop                             kind() = Gone
+}
+impl CaptureDecision { pub fn kind(self) -> FrameKind; pub fn may_copy(self) -> bool /* CopyGame only */; }
+
+/// Pure decision of what to do and when the duplication must move to another monitor. The focus debounce
+/// (`focus_grace_ms`, default 250 ms: alt-tab flashes, overlays taking focus for a moment) only delays the switch
+/// to placeholders and keeps the UI on "Game"; it NEVER authorizes copying desktop pixels.
 pub struct FocusTracker { /* ... */ }
 impl FocusTracker {
     pub fn new(focus_grace_ms: u64) -> Self;
-    /// Returns the kind of frame to emit and whether the monitor changed since the last call (→ recreate the duplication).
-    pub fn update(&mut self, state: &WindowState, now_ms: u64) -> (FrameKind, bool);
+    /// Returns the decision and whether the monitor changed since the last call (→ recreate the duplication).
+    pub fn update(&mut self, state: &WindowState, now_ms: u64) -> (CaptureDecision, bool);
 }
+
+/// Owner of a window (GetWindowThreadProcessId) and the target identity pinned at start.
+pub struct WindowOwner { pub pid: u32, pub thread_id: u32 }
+pub struct TargetIdentity { /* ... */ }
+impl TargetIdentity {
+    /// None (→ WindowNotFound) when `observed` is None / has pid or tid 0, or `requested_pid != 0` differs from it.
+    /// With `requested_pid == 0` the observed owner (pid + thread) is pinned.
+    pub fn pin(requested_pid: u32, observed: Option<WindowOwner>) -> Option<TargetIdentity>;
+    pub fn matches(&self, observed: Option<WindowOwner>) -> bool;   // exactly the pinned owner
+    pub fn owner(&self) -> WindowOwner;
+    pub fn foreground_pid(&self) -> Option<u32>;                     // Some only when GameTarget.pid was given
+}
+
+/// Start (QPC, 100 ns) of the current run of samples that allowed copying; rejects images presented before it.
+pub struct SafeStreak { /* ... */ }
+impl SafeStreak { pub fn new() -> Self; pub fn observe(&mut self, d: CaptureDecision, sampled_at_100ns: i64);
+                  pub fn since_100ns(&self) -> Option<i64>; pub fn allows(&self, present_100ns: i64, margin_100ns: i64) -> bool; }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum PixelFormat { Bgra8, Rgba16Float /* HDR scRGB */ }
 
@@ -116,14 +146,21 @@ pub struct WgcBackend; pub struct HookBackend;
    - `ACCESS_LOST`: recreate the duplication (mode change, alt-enter, monitor switch); `E_ACCESSDENIED` (secure desktop / UAC): emit
      OutOfFocus placeholders at a low rate until it recovers; `NOT_CURRENTLY_AVAILABLE`: report `TooManyDuplications` and stop;
    - success with `LastPresentTime != 0`: sample `WindowState` (GetForegroundWindow, IsIconic, DWMWA_EXTENDED_FRAME_BOUNDS, MonitorFromWindow
-     — cheap per-frame polling instead of SetWinEventHook in this phase), run `FocusTracker`; if the monitor changed, recreate the duplication
-     on the new output; for `Game`, `plan_crop` and copy to the next ring texture (`CopySubresourceRegion` for Identity; for rotated monitors,
-     a tiny pixel shader or the video processor to rotate — must produce upright pixels); `ReleaseFrame` as soon as the copy is submitted;
-     then call the sink.
-   - for `OutOfFocus`, emit the placeholder (ring texture cleared with `ClearRenderTargetView`) at the same cadence; never copy desktop pixels.
+     — cheap per-frame polling instead of SetWinEventHook in this phase — plus the owner check of `TargetIdentity`), run `FocusTracker`;
+     if the monitor changed, recreate the duplication on the new output; **only for `CopyGame`** (and an image presented after the
+     current safe run started, `SafeStreak`), `plan_crop` and copy to the next ring texture (`CopySubresourceRegion` for Identity; for
+     rotated monitors, a tiny pixel shader or the video processor to rotate — must produce upright pixels); `ReleaseFrame` as soon as the
+     copy is submitted; re-check the target identity; then call the sink.
+   - for `HoldLast`, release the frame and deliver nothing (no copy, no frame);
+   - for `Placeholder`, emit the placeholder (ring texture cleared with `ClearRenderTargetView`) at the same cadence; never copy desktop pixels;
+   - for `Gone`, stop copying immediately and end with `WindowNotFound`.
 4. Ring textures are recreated when the crop size changes (window resize). Output size stays the encoder's job (fixed output + letterbox in
    duoclip-encode GpuConverter).
-5. Cursor is never composited (DDA already excludes it). Our own windows are excluded via `exclude_from_capture`.
+5. The backend never composites a cursor. That does not guarantee its absence: per Microsoft's
+   [Desktop Duplication API](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api) docs, "Either the mouse
+   pointer is already drawn onto the desktop image that IDXGIOutputDuplication::AcquireNextFrame provides or the mouse pointer is
+   separate from the desktop image", so with some drivers/configurations the pointer may already be in the copied pixels.
+   Our own windows are excluded via `exclude_from_capture`.
 
 ## Tests
 
@@ -132,7 +169,9 @@ Portable (required, fast):
   each `Rotation` on a portrait 1080x1920 monitor (the test machine's DISPLAY2) mapping known desktop points to texture points; odd sizes → even;
   tiny (< 2 px) → None; huge/overflowing values never panic.
 - `Rect::intersect` edge cases; `Rotation::from_dxgi` for 0..=4 and garbage.
-- `FocusTracker`: focus loss shorter/longer than the grace, minimize/restore, window destroyed, monitor change detection, time going backwards.
+- `FocusTracker`: focus loss shorter/longer than the grace (never `CopyGame` while not foreground), a covering window and resume,
+  minimize/restore, window destroyed, monitor change detection, time going backwards. `SafeStreak`: images older than the safe run are
+  rejected. `TargetIdentity`: PID mismatch at start, query failure, owner change (another process / another thread), pid 0 pinning.
 - Stubs return `Unsupported`; the crate builds and tests pass on Linux.
 
 Windows hardware tests — `#[ignore = "captures the screen: run only after the user confirms"]`. They duplicate the user's monitor, so
@@ -140,7 +179,9 @@ Windows hardware tests — `#[ignore = "captures the screen: run only after the 
 they crop ONLY a window the test itself creates (a top-most window filled with a known colour pattern) and only read back that window:
 - identity monitor: 3 s of capture → frames arrive at ≥ 30 fps while the test window animates, the read-back pixels match the pattern,
   `qpc_100ns` strictly increasing, no yellow border possible (no WGC involved);
-- focus: minimizing the test window produces `OutOfFocus` placeholder frames and restoring returns to `Game`;
+- focus: minimizing the test window produces `OutOfFocus` placeholder frames and restoring returns to `Game`; losing the foreground
+  without minimizing (another window takes it, then covers the test window) delivers no game frame, nothing inside the grace and
+  placeholders after it;
 - end to end: capture → duoclip-encode GpuConverter + MfH264Encoder → duoclip-mux MP4 of the test window → ffprobe frame count/duration
   (written to `test-output/capture/`).
 - Rotated and HDR monitors: run on the user's machine only if the user agrees; report results, don't fail CI.
@@ -151,10 +192,24 @@ Required checks: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -
 ## Implementation notes (accepted deviations / additions)
 
 Status: implemented; portable tests and all workspace checks pass on Windows 11 26300 (MSVC) and
-`cargo check --target x86_64-pc-windows-gnu`. **The hardware tests in `tests/capture_hw.rs` have only been compiled, never
-run** (they capture the screen and need the user's confirmation; even the non-capturing `outputs_and_adapter_luid_without_capture`
-was not run by the implementing agent). A Linux build was not run locally (no Linux target installed); the portable modules
+`cargo check --target x86_64-pc-windows-gnu`. A Linux build was not run locally (no Linux target installed); the portable modules
 (`geom`, `focus`, `types`, `stubs`) contain no `unsafe` and no Windows imports, and `tests/capture_hw.rs` is `#![cfg(windows)]`.
+
+Hardware evidence (historical, **run by the author (Claude) on 2026-10-08 on the user's machine, with the user's authorization**;
+not a reviewer verification; details in the delivery message `docs/comunicacao/para-gpt/2026-10-08-claude-015-pedido-revisao-duoclip-capture.md`).
+It applies to commit `a6fbc2f`, i.e. BEFORE the review fixes CAP-1..CAP-4 (which changed the focus rules and the tests' foreground
+mode); the tests have to be re-run, with the user's authorization, for the current code. 6/6 passed (then using the old
+`require_foreground = false` test option):
+- primary 2560x1440 HDR monitor at 180 Hz: 541 frames in 3.01 s (179.7 fps), crop 640x480, `Rgba16Float`, ~59 µs CPU per copy,
+  strictly increasing QPC, colour blocks correct;
+- HDR: SDR white 240 nits read through `QueryDisplayConfig`; white block = 3.0 scRGB (= 240/80);
+- rotated 90° DISPLAY2 (1080x1920 at (-1080, -317)): 358 frames, crop upright, colours correct (`Bgra8`);
+- minimize/restore: 142 game frames, 52 placeholders while minimized (colour deviation 0.0000), 0 game frames while minimized,
+  127 after restoring;
+- end to end: capture → GpuConverter 1280x720 → NVIDIA H.264 MFT → mux → ffprobe: h264 1280x720, 180 frames, 3.000 s, colours
+  checked in the decoded frame.
+`rotated_monitor_report` and `hdr_monitor_report` only print `REPORT:` lines and never fail on a mismatch (by contract): a green
+result alone does not prove rotation or colours; the evidence is in their `REPORT:` lines (quoted above).
 
 Portable (additive API):
 - `Rect::new`, `Rect::contains`; `Rect::intersect` returns `Rect::default()` when there is no overlap (touching edges included).
@@ -169,22 +224,51 @@ Portable (additive API):
   clockwise to get upright pixels".
 - Even sizes: the visible part (window ∩ monitor) is trimmed to even width/height on its desktop right/bottom edges **before**
   mapping, so the upright crop keeps the window's top-left corner for every rotation. The mapped rect is then clamped to the
-  texture (only matters for a texture that does not match the monitor) and re-trimmed to even.
+  texture (only matters for a texture that does not match the monitor) and re-trimmed to even; in that defensive path
+  `CropPlan::desktop` is recomputed from the clamped `src` by the inverse transform (the sample's texture → desktop formulas),
+  so `source_texel(x, y) == desktop_to_texture(desktop.left + x, desktop.top + y)` still holds (review CAP-3; e.g. monitor/window
+  (0,0,100,100), Rotate180, texture 50x100 → src (0,0,50,100), desktop (50,0,100,100)). A plan whose desktop rect would not
+  match the upright size or leave window ∩ monitor is refused (`None`). The property tests cover mismatched textures (smaller,
+  larger, one side, odd, swapped, tiny) for all rotations.
 - `effective_rotation` (used by `plan_crop`): defensive, not from documentation. If a 90°/270° monitor ever delivers a texture
   that already has the desktop orientation (`monitor_w x monitor_h`, non-square), it is treated as Identity instead of being
   rotated twice. With the documented behaviour (native orientation) it never triggers. The rotated-monitor hardware test shows
   which case the test machine is in.
-- `FocusTracker`: minimized → `OutOfFocus` immediately (no grace: the window's pixels are not on screen, copying the region
-  would leak whatever is there); the grace applies only after the window was seen in the foreground (a window never focused
-  since start, or since it was minimized, gets no grace); the monitor-change flag ignores minimized windows (Windows parks them
-  at (-32000, -32000)) and unknown monitors (0), and the first known monitor is not a change; time going backwards is clamped
-  to the latest time seen. Additive: `FocusTracker::{grace_ms, monitor}`, `Default`, `DEFAULT_FOCUS_GRACE_MS`.
+- `FocusTracker` (review CAP-1: the earlier "focus lost < 250 ms still counts as Game" debounce let the backend copy the
+  composed desktop, i.e. a window covering the game, during the grace; replaced): `update` returns a `CaptureDecision`.
+  Only `CopyGame` (foreground and visible at that sample) lets pixels be copied; inside the grace the decision is `HoldLast`
+  (nothing copied, nothing delivered: the encoder's `FramePacer` repeats the last safe frame; the UI still says Game), after it
+  `Placeholder`. Minimized → `Placeholder` immediately; the grace applies only after the window was seen in the foreground (a
+  window never focused since start, or since it was minimized, gets no grace); the monitor-change flag ignores minimized
+  windows (Windows parks them at (-32000, -32000)) and unknown monitors (0), and the first known monitor is not a change; time
+  going backwards is clamped to the latest time seen. Additive: `FocusTracker::{grace_ms, monitor}`, `Default`,
+  `DEFAULT_FOCUS_GRACE_MS`, `CaptureDecision::{kind, may_copy}`.
+- `SafeStreak` (additive, defensive, not from documentation): an acquired image was composed at its `LastPresentTime`, before
+  the sample taken right after `AcquireNextFrame`. A crop is copied only if the image was presented at least one refresh period
+  (from the duplication's mode; 60 Hz if unknown) after the first sample of the current uninterrupted run of `CopyGame` samples
+  (sample timestamp taken after reading the window state). So an image composed while another window still covered the game,
+  just before it regained the foreground, is dropped (counted in `CaptureStats::held_images`). Assumption, not verified: the
+  one-period margin covers DWM composing slightly before the present time. Polling cannot see a focus loss and regain entirely
+  between two samples (samples happen at least every acquire timeout, ≤ 100 ms).
+- Residual (not addressed, outside the decided scope): "foreground" is the privacy criterion. Another app's always-on-top
+  window (or toast) drawn over a foreground game is not detected (that would need an occlusion check or a backend that
+  isolates the window, e.g. WGC); same for windows owned by the game (`GA_ROOTOWNER`) or, when `GameTarget::pid` is given,
+  other windows of the game's process, which count as "game in foreground".
+- Identity (review CAP-2): `TargetIdentity` pins the window's owner (`GetWindowThreadProcessId`: pid + thread id) in `start`;
+  `start` returns `WindowNotFound` (before any duplication) if the window does not exist, the query fails, or a non-zero
+  `GameTarget::pid` differs. With pid 0 the observed owner is pinned. Every sample (`window_state`, which checks the owner
+  before and after its other queries) and every delivery (re-checked after the copy, right before the sink) must observe
+  exactly the pinned owner; otherwise `Gone` → no copy, `on_error(WindowNotFound)`, the thread ends. A destroyed and recreated
+  game window is a new target (the caller restarts the capture). Additive: `WindowOwner`, `TargetIdentity`,
+  `window_owner(hwnd)` (Windows).
 - `WindowState::minimized` also covers hidden (`!IsWindowVisible`) and cloaked (`DWMWA_CLOAKED`, e.g. another virtual desktop)
   windows. `WindowState` derives `Default` (= gone).
-- `GameTarget` is portable (plain integers). `CaptureOptions { focus_grace_ms (250), require_foreground (true),
-  blocked_placeholder_fps (10) }` + `DdaCropBackend::with_options`. `require_foreground = false` makes a visible window count
-  as focused (windowed game watched while chatting on another monitor; also used by the hardware tests, so a click on the
-  terminal during a test does not turn frames into placeholders).
+- `GameTarget` is portable (plain integers). `CaptureOptions { focus_grace_ms (250), blocked_placeholder_fps (10) }` +
+  `DdaCropBackend::with_options`. The former public `require_foreground` option (review CAP-1: it allowed copying a possibly
+  covered region indefinitely) was removed. What remains is a `#[doc(hidden)]` field `test_only_copy_without_foreground`
+  (default `false`, documented as privacy-unsafe, never to be set by the app): a visible target window counts as foreground. It
+  exists only as an explicit opt-in fallback for the hardware tests (`DUOCLIP_CAPTURE_TEST_ALLOW_BACKGROUND=1`) if Windows
+  refuses the foreground to their test window.
 - Helpers: `qpc_to_100ns` (i128, saturating), `MonotonicStamp` (strictly increasing frame times: a time `<=` the previous one is
   nudged to `previous + 1`, e.g. a game frame presented just before the last placeholder's "now"), `acquire_timeout_ms`
   (2 refresh periods rounded up, clamped 4..=100 ms, 33 ms if unknown), `placeholder_size`, `CaptureStats::add_copy_sample`.
@@ -227,25 +311,39 @@ Windows:
   ignores the "already set" error; the capture thread also calls `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)`, so it
   works in physical pixels even when the process awareness could not be changed.
 - Foreground: the foreground window is the game, is owned by it (`GetAncestor(GA_ROOTOWNER)`), or belongs to
-  `GameTarget::pid` (when non-zero).
+  `GameTarget::pid` (only when it was given non-zero; a pid pinned from the handle does not widen it).
 - MMCSS task `"Capture"`: verified to exist under
   `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks` on the test machine (Audio, Capture,
   DisplayPostProcessing, Distribution, Games, Playback, Pro Audio, Window Manager); failure is ignored; reverted when the thread
   ends.
 - Additive: `list_outputs() -> Vec<OutputInfo>` (name, desktop rect, rotation, HMONITOR, adapter LUID/name, HDR, SDR white),
-  `window_state(hwnd, pid, require_foreground)` (the per-frame sampler), `init_dpi_awareness()`.
+  `window_state(hwnd, &TargetIdentity)` (the per-frame sampler), `window_owner(hwnd)`, `init_dpi_awareness()`.
 - `CaptureStats::copy_cpu_us_avg` = CPU time to submit the crop (ring slot lookup + copy/rotation pass), averaged over game
-  frames.
+  frames. Additive `CaptureStats::held_images`: new images deliberately not copied (`HoldLast`, or older than the safe run).
 
 Hardware tests (`tests/capture_hw.rs`, all `#[ignore]`; run one at a time with `--test-threads=1`, a static mutex also
 serializes them). Every capturing test creates its own 640x480 top-most popup (four colour blocks red/green/blue/white on top,
 a black strip with a moving yellow bar below, redrawn every DWM frame via `DwmFlush`) and only reads back / encodes that
-window's crop. They use `require_foreground = false` (see above).
-- `outputs_and_adapter_luid_without_capture` (captures nothing): lists outputs, resolves the desktop window's adapter LUID.
+window's crop. They use the safe default options: each test makes its window the foreground window (`SetForegroundWindow` +
+`BringWindowToTop`, polled up to 2 s) and asserts it ("mode: strict"). If Windows refuses the foreground (foreground lock),
+the test fails with a message, unless `DUOCLIP_CAPTURE_TEST_ALLOW_BACKGROUND=1` opts into the hidden test-only knob ("mode:
+BACKGROUND"; only with the user's agreement: anything drawn over the test window would be captured).
+- `outputs_and_adapter_luid_without_capture` (captures nothing): lists outputs, resolves the desktop window's adapter LUID,
+  pins the desktop window's owner and samples it.
+- `identity_mismatch_rejected_without_capture` (captures nothing; needs a D3D11 device): an invisible message-only window;
+  `start` with a mismatching non-zero pid and with hwnd 0 → `WindowNotFound`, not running, 0 frames, default stats; after
+  `DestroyWindow` the owner query returns `None`. (A portable-path unit test, `win::window::tests`, does the same on a
+  message-only window without a device and runs with `cargo test`.)
 - `identity_monitor_capture_rate_pixels_and_qpc`: primary monitor (or the first non-rotated one), 3 s; ≥ 30 game fps, crop
   size = window ∩ monitor (even), strictly increasing `qpc_100ns`, colour blocks checked on a read-back frame (BGRA8 or FP16).
 - `minimize_gives_placeholders_and_restore_gives_game`: 0.8 s game, minimized 1.2 s (≥ 5 placeholders, 0 game frames, the
-  placeholder is the constant dark colour), restore (≥ 5 game frames, pattern checked again).
+  placeholder is the constant dark colour), restore + take the foreground back (asserted in strict mode), then ≥ 5 game
+  frames, pattern checked again.
+- `focus_loss_without_minimize_holds_then_placeholders` (strict mode only; skipped in BACKGROUND mode): target with `pid = 0`;
+  0.8 s game; a hidden magenta top-most window of the test process, beside the test window, is shown and takes the foreground,
+  then is moved over the test window; 1.5 s later it is destroyed and the test window takes the foreground back. Asserts:
+  ≥ 5 game frames before, 0 game frames from 50 ms after the switch until the resume, 0 placeholders inside the grace (hold),
+  ≥ 5 placeholders after it (constant dark colour), ≥ 5 game frames after the resume with the pattern (no magenta).
 - `end_to_end_capture_encode_mux_mp4`: 3 s → `FramePacer` 60 fps → `GpuConverter` 1280x720 → `MfH264Encoder` →
   `duoclip-mux` progressive MP4 at `test-output/capture/capture-e2e.mp4`; ffprobe codec/size/frame count/duration,
   `ffmpeg -f null` clean, colour blocks checked in a decoded frame at 1 s. The converter/encoder are created on the capture

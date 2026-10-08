@@ -11,7 +11,7 @@ use crate::{CaptureError, FrameKind, PixelFormat, Rect};
 
 pub use dda::DdaCropBackend;
 pub use output::{adapter_luid_for_window, list_outputs, OutputInfo};
-pub use window::{exclude_from_capture, init_dpi_awareness, window_state};
+pub use window::{exclude_from_capture, init_dpi_awareness, window_owner, window_state};
 
 /// The frame handed to the sink.
 ///
