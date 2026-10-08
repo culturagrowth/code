@@ -10,6 +10,7 @@
 
 import type { Quality } from "./keys.js";
 import type { QuotaVerdict } from "./quota.js";
+import type { PresenceInput } from "./validate.js";
 
 /** A registered device. */
 export interface DeviceRow {
@@ -23,6 +24,17 @@ export interface DeviceRow {
 export interface MemberRow {
   device_id: string;
   display_name: string;
+}
+
+/** Available online crew member, before adding the derived expiry to the API response. */
+export interface PresenceRow extends MemberRow, PresenceInput {
+  seen_at_ms: number;
+}
+
+/** Complete available-member snapshot of one of the caller's own crews. */
+export interface CrewPresence {
+  crew_id: string;
+  members: PresenceRow[];
 }
 
 /** An invite code. */
@@ -83,6 +95,15 @@ export interface Db {
   isMember(crewId: string, deviceId: string): Promise<boolean>;
   listMembers(crewId: string): Promise<MemberRow[]>;
   addMember(crewId: string, deviceId: string, nowMs: number): Promise<void>;
+
+  /** Atomically accepts a newer run/sequence pair or replaces an expired announcement; null means stale. */
+  updatePresence(deviceId: string, input: PresenceInput, nowMs: number, ttlMs: number): Promise<number | null>;
+  /** Fresh members who are idle or active in this crew, sorted by device id. */
+  listPresence(crewId: string, nowMs: number, ttlMs: number): Promise<PresenceRow[]>;
+  /** All current own crews, including empty snapshots, fetched in one SQL query. */
+  listCrewPresence(deviceId: string, nowMs: number, ttlMs: number): Promise<CrewPresence[]>;
+  /** Deletes announcements strictly older than the freshness cutoff. */
+  purgePresence(olderThanMs: number): Promise<number>;
 
   /** Inserts an invite; resolves `false` when the code already exists. */
   insertInvite(row: InviteRow): Promise<boolean>;
@@ -278,6 +299,83 @@ export function createD1Db(d1: D1Like): Db {
         nowMs,
       );
     },
+
+    async updatePresence(deviceId, input, nowMs, ttlMs) {
+      const rows = await all<{ seen_at_ms: number }>(
+        `INSERT INTO device_presence (device_id, game, active_crew, seated_since_ms, seq, online_since_ms, seen_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (device_id) DO UPDATE SET
+           game = excluded.game, active_crew = excluded.active_crew, seated_since_ms = excluded.seated_since_ms,
+           seq = excluded.seq,
+           online_since_ms = excluded.online_since_ms,
+           seen_at_ms = MAX(device_presence.seen_at_ms, excluded.seen_at_ms)
+         WHERE device_presence.seen_at_ms < ?8
+            OR excluded.online_since_ms > device_presence.online_since_ms
+            OR (excluded.online_since_ms = device_presence.online_since_ms AND excluded.seq > device_presence.seq)
+         RETURNING seen_at_ms`,
+        deviceId,
+        input.game,
+        input.active_crew,
+        input.seated_since_ms,
+        input.seq,
+        input.online_since_ms,
+        nowMs,
+        nowMs - ttlMs,
+      );
+      return rows[0]?.seen_at_ms ?? null;
+    },
+
+    listPresence: (crewId, nowMs, ttlMs) =>
+      all<PresenceRow>(
+        `SELECT p.device_id, d.display_name, p.game, p.active_crew, p.seated_since_ms, p.seq,
+                p.online_since_ms, p.seen_at_ms
+           FROM crew_members m
+           JOIN device_presence p ON p.device_id = m.device_id
+           JOIN devices d ON d.device_id = p.device_id
+          WHERE m.crew_id = ?1 AND p.seen_at_ms >= ?2
+            AND (p.active_crew IS NULL OR p.active_crew = ?1)
+          ORDER BY p.device_id`,
+        crewId,
+        nowMs - ttlMs,
+      ),
+
+    async listCrewPresence(deviceId, nowMs, ttlMs) {
+      type JoinedRow = { crew_id: string } & { [K in keyof PresenceRow]: PresenceRow[K] | null };
+      const rows = await all<JoinedRow>(
+        `WITH own_crews AS (
+           SELECT crew_id FROM crew_members WHERE device_id = ?1
+         ), available AS (
+           SELECT m.crew_id, p.device_id, d.display_name, p.game, p.active_crew,
+                  p.seated_since_ms, p.seq, p.online_since_ms, p.seen_at_ms
+             FROM own_crews own
+             JOIN crew_members m ON m.crew_id = own.crew_id
+             JOIN device_presence p ON p.device_id = m.device_id
+             JOIN devices d ON d.device_id = p.device_id
+            WHERE p.seen_at_ms >= ?2 AND (p.active_crew IS NULL OR p.active_crew = m.crew_id)
+         )
+         SELECT own.crew_id, p.device_id, p.display_name, p.game, p.active_crew,
+                p.seated_since_ms, p.seq, p.online_since_ms, p.seen_at_ms
+           FROM own_crews own LEFT JOIN available p ON p.crew_id = own.crew_id
+          ORDER BY own.crew_id, p.device_id`,
+        deviceId,
+        nowMs - ttlMs,
+      );
+      const crews = new Map<string, CrewPresence>();
+      for (const row of rows) {
+        let snapshot = crews.get(row.crew_id);
+        if (snapshot === undefined) {
+          snapshot = { crew_id: row.crew_id, members: [] };
+          crews.set(row.crew_id, snapshot);
+        }
+        const { crew_id: _crewId, ...member } = row;
+        // Only empty crews have a NULL device id; populated rows come from inner-joined typed tables.
+        if (member.device_id !== null) snapshot.members.push(member as PresenceRow);
+      }
+      return [...crews.values()];
+    },
+
+    purgePresence: (olderThanMs) =>
+      run("DELETE FROM device_presence WHERE seen_at_ms < ?1", olderThanMs),
 
     async insertInvite(row) {
       const changes = await run(

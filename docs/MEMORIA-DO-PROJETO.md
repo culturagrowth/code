@@ -300,6 +300,9 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 - Todos os worktrees ficam em `duoclip\worktrees\`; a pasta principal fica na branch de integração. Credenciais só no `worker/.dev.vars` (ignorado).
 - Cloudflare: bucket R2 **`povclip`** (escolha do usuário; exclusivo do DuoClip, regra de ciclo de vida em `clips/` autorizada) e D1 `duoclip`.
   O teste real do R2 passou (ver [`worker/R2-VALIDACAO.md`](../worker/R2-VALIDACAO.md)). Migrações remotas, regra de ciclo de vida e deploy pendentes.
+- Presença por grupo no Worker (tarefa 10): heartbeat a cada **30 s**, validade de **90 s**, o próprio heartbeat devolve o retrato de todos
+  os grupos (sem polling separado), tempos no relógio global (AppClock). Escolhido para caber no plano grátis do D1 (100 mil linhas gravadas/dia).
+  O adaptador no app (tarefa 17) aplica os retratos completos e usa `presence_ttl_ms = 90000` no `duoclip-session`.
 - O estado de cada entrega (branch, commit, revisão) fica em [`TAREFAS.md`](TAREFAS.md) e na caixa, não aqui.
 
 1. **Terminar a B1:**

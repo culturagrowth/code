@@ -147,6 +147,44 @@ export function parseCreateCrew(body: JsonObject): string {
   return requireName(body, "name", MAX_CREW_NAME_CHARS);
 }
 
+/** A session announcement; identity and receipt time are supplied by the Worker. */
+export interface PresenceInput {
+  game: string | null;
+  active_crew: string | null;
+  seated_since_ms: number | null;
+  seq: number;
+  online_since_ms: number;
+}
+
+/** Validates `POST /v1/presence`, preserving game ids exactly for equality matching. */
+export function parsePresence(body: JsonObject): PresenceInput {
+  const game = body["game"];
+  if (game !== null && (
+    typeof game !== "string" || game.trim().length === 0 ||
+    new TextEncoder().encode(game).byteLength > 64 || FORBIDDEN_TEXT_RE.test(game)
+  )) {
+    throw invalid("game must be null or a nonempty game id of at most 64 UTF-8 bytes without forbidden characters");
+  }
+  const activeCrew = body["active_crew"];
+  if (activeCrew !== null && !isUuid(activeCrew)) {
+    throw invalid("active_crew must be null or a lowercase hyphenated uuid");
+  }
+  const nonnegativeInteger = (field: string): number => {
+    const value = body[field];
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+      throw invalid(`${field} must be a nonnegative safe integer`);
+    }
+    return value;
+  };
+  return {
+    game,
+    active_crew: activeCrew,
+    seated_since_ms: body["seated_since_ms"] === null ? null : nonnegativeInteger("seated_since_ms"),
+    seq: nonnegativeInteger("seq"),
+    online_since_ms: nonnegativeInteger("online_since_ms"),
+  };
+}
+
 /** Validates the body of `POST /v1/crews/join`; returns the normalized (upper case) code. */
 export function parseJoin(body: JsonObject): string {
   const value = body["code"];

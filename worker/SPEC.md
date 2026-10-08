@@ -74,6 +74,8 @@ seen_signatures(sig TEXT PRIMARY KEY, seen_at INTEGER NOT NULL)
 | `POST /v1/crews/:crew/invites` | member | Create an invite: a random code of 10 chars `[A-Z2-9]`, valid 24 h, 5 uses. Returns `{code, expires_at}`. |
 | `POST /v1/crews/join` `{code}` | any device | Join if the code is valid and has uses left (decrement atomically). Returns `{crew_id}`. |
 | `GET /v1/crews/:crew/members` | member | `[{device_id, display_name}]` |
+| `POST /v1/presence` `{game, active_crew, seated_since_ms, seq, online_since_ms}` | any device | Heartbeat and complete snapshots of the caller's crews; see presence contract below. |
+| `GET /v1/crews/:crew/presence` | member | Fresh, available members of this crew; see presence contract below. |
 | `POST /v1/clips` `{clip_id, crew_id, ttl_s}` | member | Register a clip (`ttl_s` ≤ 259200 = 72 h, default 72 h). Idempotent for the same owner. |
 | `POST /v1/clips/:clip/upload-urls` `{pov, quality, indices[], sizes[], manifest}` | member, and `pov` == caller | Presigned **PUT** URLs for the chunk keys (+ manifest key if requested). At most 64 indices, each size ≤ 64 MiB. Per-clip total ≤ 1.5 GiB. Per device per UTC day ≤ 10 GiB (usage table). Content-Type `application/octet-stream` is signed. |
 | `POST /v1/clips/:clip/download-urls` `{pov, quality, indices[], manifest}` | member | Presigned **GET** URLs |
@@ -84,7 +86,66 @@ seen_signatures(sig TEXT PRIMARY KEY, seen_at INTEGER NOT NULL)
 - delete clips whose `expires_at < now` (R2 objects first, then the row);
 - purge `seen_signatures` older than 15 min;
 - delete expired invites;
+- delete presence rows older than the presence TTL;
 - log counts.
+
+### Presence contract (task 10)
+
+- Migration `0003_presence.sql` adds one `device_presence` row per authenticated device, not per crew.
+  A heartbeat updates the device's availability consistently across all its crews.
+- All five fields are required: `game` is `null` (app open, no game) or a nonempty UTF-8 string of at most
+  64 bytes without control/surrogate/bidi-control characters (a games-db id, not a display name);
+  `active_crew` is `null` (no crew chosen) or a lowercase canonical UUID of a crew the caller belongs to;
+  `seq` and `online_since_ms` are nonnegative JavaScript safe integers (0..9007199254740991).
+  `seated_since_ms` is `null` when not seated or a nonnegative safe integer when holding a seat.
+  Device identity always comes from the signature, never a body field. Unknown fields are ignored as on other routes.
+- `seq` increases within an app run. Fresh rows accept only a lexicographically newer `(online_since_ms, seq)` pair:
+  a greater `online_since_ms` accepts a restarted app immediately, even when its sequence resets.
+  An old run or an equal/lower sequence in the same run returns
+  `409 stale_presence`, without updating any field or extending freshness. Once it expires, any sequence is accepted,
+  allowing app restarts. The comparison and update are one conditional SQL statement.
+- Freshness uses **Worker receipt time**, never a client timestamp: `now - seen_at_ms <= 90000`.
+  `online_since_ms` and `seated_since_ms` use the **DuoClip global clock (AppClock, milliseconds)**, so different PCs can compare them
+  for queue and seat ordering. They do not determine TTL or membership authorization.
+  Clients heartbeat every 30 s and immediately on commitment, game or seat changes; a new run starts a new online-since/sequence.
+  A restarted clock that goes backwards may be locked out for at most the 90-second TTL.
+- POST returns `200 {ok:true, seen_at_ms, expires_at, heartbeat_interval_ms:30000, crews:[{crew_id,members:[]}]}`,
+  where `expires_at = seen_at_ms + 90000`. Each crew the caller currently belongs to has one complete snapshot,
+  sorted by crew id; members use the GET shape and ordering below. An empty crew is included with `members: []`.
+  A device without crews receives `crews: []`. This avoids a separate authenticated GET per heartbeat.
+  All snapshots are fetched with one SQL read; the number of crews does not add a query per crew.
+  the row is still fresh at that exact millisecond. Invalid input returns 400; an active crew without membership returns 403.
+- GET returns an array sorted by device id:
+  `[{device_id, display_name, game, active_crew, seated_since_ms, seq, online_since_ms, seen_at_ms, expires_at}]`.
+  It includes the caller if fresh and available, idle members (`game: null`), and members playing any game.
+  The session client selects the matching game and caps the session at 8; the Worker must not truncate the crew to 8.
+- A member is available when `active_crew` is `null` or equals the queried crew. Members active in a different crew
+  are omitted, so its identity is never disclosed across groups. No query can expose non-members or expired rows.
+  The same isolation applies separately to every POST snapshot; the caller cannot choose extra crew ids to query in the body.
+  The client treats POST and GET results as full snapshots (missing members leave); it must not refresh cached presence from a
+  snapshot that repeats a run/sequence pair, or use Worker timestamps as its local clock.
+  Configure `SessionConfig.presence_ttl_ms` to 90000 when using this transport, and translate freshness using local receipt time.
+- GET remains available for explicit reads; clients must not poll it in parallel with the regular POST snapshots.
+- Hourly sweep purges rows with `seen_at_ms < now - 90000` and reports `presence_rows_purged`.
+  Expired devices disappear from GET immediately, even before cron runs.
+- Required tests: auth and membership, multi-crew isolation and busy peers, idle/different games and 8+ members,
+  malformed/oversized input, receipt-time TTL including the boundary, heartbeat renewal, stale/concurrent sequences,
+  restart after expiry, purge boundaries and the real SQL migration/query/update path. No network or capture is needed.
+  Also cover nullable/safe-integer seats, restarted-run ordering, all-crew POST snapshots including empty crews,
+  isolation across those snapshots, and eight clients obtaining peers with one authenticated request per interval.
+
+#### D1 write budget
+
+Migration 0003 deliberately omits the receipt-time index: small private groups can scan this one-row-per-device table during cron.
+This avoids one index write per heartbeat. Replay protection remains unchanged: each signature has a table row plus two indexes,
+then expires and is deleted by cron. Conservatively budget 3 insertion + 3 deletion writes for replay protection and up to 2 for
+the presence row/primary index, or **8 written rows per heartbeat including deferred cleanup**.
+At 30 s, 8 devices produce 960 heartbeats/hour: at most **7680 estimated written rows/hour**, or **92160 in 12 hours**.
+This is an estimate, not a measured D1 billing guarantee. Other API requests, state-change bursts, setup writes and presence cleanup
+share the daily quota; more groups/devices increase usage. Monitor actual D1 metrics and retain headroom.
+The free-plan allowance is currently 100000 written rows/day; continuously polling for 24 hours exceeds it even with this policy.
+Index accounting and the allowance are documented in [Cloudflare D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/).
+Using separate GET polling would add replay writes and must be included in the budget if a client chooses to do it.
 
 Documented in the README as a backstop: an R2 lifecycle rule on prefix `clips/` that expires objects after 3 days and aborts incomplete
 multipart uploads after 1 day.
@@ -141,7 +202,7 @@ All uuids are lowercase and hyphenated.
 - Recommended after the friends register: Cloudflare rate-limiting rules on `POST /v1/devices` and `POST /v1/crews/join`, and possibly closing
   registration. Any crew member can delete any clip (per SPEC), and there is no member removal yet.
 
-## Implementation notes (task 13, awaiting cross-review)
+## Implementation notes (task 13, approved by Claude 2026-10-08)
 
 - The opt-in probe uses existing dependencies and does not change production routes, quotas or presigning rules.
   Nine offline tests cover the probe's control flow, exact headers, cleanup, redaction and negative length check.
@@ -149,3 +210,18 @@ All uuids are lowercase and hyphenated.
   The GPT sandbox's earlier attempts were blocked with `EACCES`. See `R2-VALIDACAO.md` for the user-supplied evidence.
   Non-secret R2/D1 identifiers are configured. The user subsequently queried the configured D1 successfully with Wrangler;
   it had zero tables. Worker deployment and remote D1 migrations remain pending.
+
+## Implementation notes (task 10, approved by Claude 2026-10-08)
+
+- The presence contract above extends the Phase A API; no existing route changes its response or authorization.
+  Presence uses the existing injected `Db`, clock and Ed25519 authentication, with no new dependencies.
+- Mapping to the session crate: `device_id` becomes `Presence.device`; the other announcement fields retain their names.
+  The JSON safe-integer limit is narrower than Rust's `u64`. The client must stay in that range; sequence zero is accepted
+  for a newer app run or after the old heartbeat expires. Presence transport adapters in the native app remain outside this Worker task.
+- Busy members are omitted across crews to preserve isolation. An adapter must apply complete POST/GET snapshots, including
+  departures; simply replaying the returned rows through `on_presence` will leave missing peers cached until the local TTL.
+- Verification uses real SQLite SQL and synthetic data; this task does not deploy the Worker or apply migrations to remote D1.
+- Cross-review follow-up adds the session's nullable seat timestamp, global-clock semantics and atomic app-run ordering.
+  The 30-second heartbeat/90-second TTL, POST snapshots and omission of a receipt-time index reduce D1 write pressure.
+  All own-crew snapshots use one SQL query, preserving empty crews and avoiding one query per crew.
+  Author responses and verification are recorded in `PRESENCA-AJUSTES.md`; approved by Claude on 2026-10-08.
