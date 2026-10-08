@@ -13,8 +13,8 @@ Nenhum achado bloqueante na revisão do código. O fluxo normal mantém a captur
 janela escolhida, usa fontes de áudio configuradas sem substituir falhas por captura geral
 do sistema, estende o clipe em apertos repetidos e salva em arquivo temporário antes de
 renomear o MP4. O microfone vem desligado por padrão. O encerramento normal drena as fontes
-e aguarda os salvamentos. A execução com hardware abaixo confirmou parte do fluxo;
-a captura da imagem real ainda falta validar.
+e aguarda os salvamentos. A execução autorizada com hardware confirmou captura e
+salvamento da janela de teste com áudio sintético, incluindo cores e movimento.
 
 ## Verificações executadas sem gravação
 
@@ -38,7 +38,7 @@ sem validar as cores/movimento nem o tom de 440 Hz. Um MP4 com quadros de prote�
 áudio silencioso poderia passar essas verificações. Sugestão: conferir o conteúdo do MP4
 produzido ao executar este teste; reforçar suas asserções futuramente, se necessário.
 
-## Teste real executado — validação parcial
+## Execuções iniciais — validação parcial
 
 O usuário confirmou em 08/10/2026: "pode rodar o teste". Também reafirmou que pontos finos
 devem ser anotados com prioridade baixa, conforme decisão 19. Nenhuma mudança de código
@@ -120,12 +120,42 @@ O observador registra em `focus-observations.json` o desktop do observador, o de
 entrada, o desktop da janela de teste e mudanças no foco a cada 50 ms durante toda a
 execução. Não registra nomes/conteúdo de outros apps nem muda foco, desktop ou entrada.
 A sintaxe Python/PowerShell e o caminho do executável foram conferidos; essa nova
-execução pelo usuário ainda está pendente. Código do gravador e do teste Rust não mudaram.
+execução pelo usuário estava pendente nessa etapa. Código do gravador e do teste Rust
+não mudaram.
+
+## Execução com primeiro plano — teste aprovado
+
+O usuário executou o roteiro atualizado via `!`. Observador, desktop de entrada e janela
+do teste estavam em **Default**. A janela ganhou primeiro plano aos **0,660 s** e o manteve
+até o encerramento, aos 9,473 s; o teste também imprimiu primeiro plano `true`.
+
+**1 teste passou, 0 falhas**, em 9,57 s. O fluxo capturou a janela, codificou em H.264
+pela NVIDIA, misturou/codificou o tom sintético em AAC e coletou/salvou o clipe sem lacunas
+ou truncamento reportados. O teste decodificou as duas faixas sem erros com ffmpeg.
+
+Conferência independente do conteúdo do MP4, além das asserções do teste:
+
+- **1280×720, 30 fps, 3,033 s**, H.264 + AAC estéreo 48 kHz, 177.434 bytes.
+- Inspeção de `frame-validado.png`: blocos vermelho, verde, azul e branco, barra amarela
+  e fundo preto esperados; não são quadros de proteção.
+- Todos os 90 quadros apresentados foram analisados na redução para 64×36: as quatro
+  cores aparecem, a barra tem **27 posições distintas**, com centro horizontal de 9,94
+  a 53 pixels. As verificações `--expect-pattern` do script de análise passaram.
+- Áudio: RMS **0,1414**, tom estimado **440,005 Hz**; não está silencioso.
+
+Arquivo atual: `test-output/recorder/recorder-e2e.mp4` deste worktree.
+SHA-256: `7a2979a83c34b4abea76a96a009ce744758e9415641d0a01606c3ad4111cb0a7`.
+Evidências atuais: `test-output/review-recorder/hardware-desktop-normal.log`,
+`focus-observations.json`, `media-verification.json`, `frame-validado.png` e `audio.wav`.
+O script `verify_media.py --expect-pattern` faz a conferência de cores/movimento e áudio.
+Nenhuma correção do gravador ou do teste Rust foi necessária. REC-1 permanece como
+melhoria menor das asserções do teste, para depois: seu impacto foi coberto pela análise.
 
 Esse teste não valida a detecção de um jogo real, o registro do atalho nem as fontes WASAPI
 de jogo/Discord/microfone. Essas partes continuam **não verificadas com hardware**.
 Permanecem os limites já documentados da captura DDA, inclusive sobreposições visíveis.
 
-**Veredito: aprovado**, com validação de imagem pendente e REC-1 registrado como menor,
-sem prioridade de implementação. O teste confirma encoder, áudio sintético, coleta e
-MP4 reproduzível; não confirma captura das cores/movimento nem gravação de jogo real.
+**Veredito: aprovado, incluindo o teste automático com hardware e conteúdo verificado.**
+Captura da janela, cores, movimento, encoder, áudio sintético, coleta e MP4 reproduzível
+foram confirmados. REC-1 fica para depois. Uso em jogo real, fontes WASAPI e atalho global
+continuam pendentes, conforme limites de escopo deste teste.
