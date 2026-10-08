@@ -1,48 +1,65 @@
 # App de clipes sincronizados entre amigos — Pesquisa e proposta de arquitetura
 
-> **Nome provisório:** DuoClip · **Plataforma:** Windows 10/11 · **Pesquisa feita em:** outubro de 2026
+> **Nome provisório:** DuoClip · **Plataforma:** Windows 10/11 · **Versão:** 2 (08/10/2026)
 >
-> Objetivo: dois (ou mais) amigos jogando juntos, cada um com o app aberto. O app grava a tela do jogo
-> de forma contínua e leve (como Medal, OBS e ShadowPlay). Quando acontece algo engraçado, um deles aperta
-> a tecla de clipe e o app salva **a tela dos dois, sincronizada no tempo**. Depois abre uma prévia para
-> escolher onde o clipe começa e termina. O app grava **só o jogo, o som do jogo e as vozes do Discord**.
+> Objetivo: dois ou mais amigos jogam juntos, cada um com o app aberto. O app grava a tela do jogo
+> de forma contínua e leve, como Medal, OBS e ShadowPlay. Quando acontece algo engraçado, um deles aperta
+> a tecla de clipe e o app salva **a tela dos dois, sincronizada no tempo**, incluindo **alguns segundos antes e
+> alguns segundos depois** do aperto. Em seguida abre uma prévia para escolher onde o clipe começa e termina.
+> O app grava **só o jogo, o som do jogo e as vozes do Discord**.
+>
+> Evidências detalhadas sobre os métodos de captura do OBS e do Medal:
+> **[anexo-metodos-de-captura-obs-medal.md](anexo-metodos-de-captura-obs-medal.md)**.
+
+---
+
+## 0. O que mudou nesta versão
+
+| Pedido | O que foi feito | Onde |
+|---|---|---|
+| **Relógio global** dentro do app, em vez do relógio do computador | Criamos o **Relógio Global DuoClip**. Ele usa o contador de alta precisão do PC (QPC) como base e é sincronizado com servidores de hora atômica com NTS (NTP.br e Cloudflare). Durante a sessão, os PCs se refinam entre si. Todos os clipes de todos os participantes ficam na mesma linha do tempo (UTC). | [Seção 8](#8-relógio-global-do-duoclip) |
+| Verificar a **gravação um pouco depois do momento do aperto** | Pesquisamos como OBS, Medal, Overwolf, Steam, NVIDIA e outros fazem. Desenhamos o mecanismo "fixar e coletar", com margens de segurança, valores padrão e uma tabela de casos de borda. | [Seção 6](#6-buffer-de-replay-e-gravação-além-do-aperto-pós-roll) |
+| **Sistema de bucket** para os clipes temporários | Comparamos R2, S3 São Paulo, GCS, Supabase, B2 e Wasabi (preços oficiais, expiração e segurança). Recomendação: **Cloudflare R2 com criptografia ponta a ponta e expiração automática**, mais "buckets" locais em disco para os clipes em andamento. | [Seção 10](#10-rede-e-armazenamento-temporário-bucket) |
+| Verificar se **a gravação de tela é a mais eficaz** e o que **Medal e OBS usam** | Lemos o código-fonte do OBS e reunimos as evidências sobre o Medal: o suporte do próprio Medal, logs reais e análise do instalador. Resposta: os dois usam **por padrão um hook injetado no jogo**, e o **WGC aparece como opção** ("Modern (WGC)" no OBS, "Advanced Window Capture" no Medal). Para um app novo que precisa ser seguro com anti-cheat, **o WGC é o melhor método disponível**. | [Seção 4](#4-captura-de-vídeo-o-que-obs-e-medal-usam-e-qual-é-o-mais-eficaz) e [anexo](anexo-metodos-de-captura-obs-medal.md) |
 
 ---
 
 ## Sumário
 
+0. [O que mudou nesta versão](#0-o-que-mudou-nesta-versão)
 1. [Resumo da recomendação](#1-resumo-da-recomendação)
 2. [Requisitos](#2-requisitos)
 3. [O que já existe no mercado](#3-o-que-já-existe-no-mercado)
-4. [Captura de vídeo](#4-captura-de-vídeo)
-5. [Codificação por hardware e buffer de replay](#5-codificação-por-hardware-e-buffer-de-replay)
-6. [Áudio: só o jogo + Discord](#6-áudio-só-o-jogo--discord)
-7. [Sincronização "exata" entre dois PCs](#7-sincronização-exata-entre-dois-pcs)
-8. [Fluxo completo de um clipe](#8-fluxo-completo-de-um-clipe)
-9. [Rede: pareamento, conexão P2P e transferência](#9-rede-pareamento-conexão-p2p-e-transferência)
-10. [Editor / pré-visualização](#10-editor--pré-visualização)
-11. [Segurança e privacidade](#11-segurança-e-privacidade)
-12. [Stack tecnológica: opções e recomendação](#12-stack-tecnológica-opções-e-recomendação)
-13. [Distribuição, assinatura e requisitos mínimos](#13-distribuição-assinatura-e-requisitos-mínimos)
-14. [Roadmap sugerido](#14-roadmap-sugerido)
-15. [Riscos e como mitigar](#15-riscos-e-como-mitigar)
-16. [Fontes](#16-fontes)
+4. [Captura de vídeo: o que OBS e Medal usam e qual é o mais eficaz](#4-captura-de-vídeo-o-que-obs-e-medal-usam-e-qual-é-o-mais-eficaz)
+5. [Codificação por hardware](#5-codificação-por-hardware)
+6. [Buffer de replay e gravação além do aperto (pós-roll)](#6-buffer-de-replay-e-gravação-além-do-aperto-pós-roll)
+7. [Áudio: só o jogo + Discord](#7-áudio-só-o-jogo--discord)
+8. [Relógio global do DuoClip](#8-relógio-global-do-duoclip)
+9. [Fluxo completo de um clipe](#9-fluxo-completo-de-um-clipe)
+10. [Rede e armazenamento temporário (bucket)](#10-rede-e-armazenamento-temporário-bucket)
+11. [Editor / pré-visualização](#11-editor--pré-visualização)
+12. [Segurança, privacidade e consentimento](#12-segurança-privacidade-e-consentimento)
+13. [Stack tecnológica](#13-stack-tecnológica)
+14. [Distribuição e requisitos mínimos](#14-distribuição-e-requisitos-mínimos)
+15. [Roadmap](#15-roadmap)
+16. [Riscos e mitigação](#16-riscos-e-mitigação)
+17. [Fontes](#17-fontes)
 
 ---
 
 ## 1. Resumo da recomendação
 
-| Tema | Decisão recomendada | Por quê |
+| Tema | Decisão | Por quê |
 |---|---|---|
-| Captura de vídeo | **Windows.Graphics.Capture (WGC)** apontado para a **janela do jogo** | API oficial do Windows. Não injeta nada no jogo, o que evita problemas com anti-cheat. Captura só a janela escolhida, e o frame já chega como textura na GPU. |
-| Codificação | **Encoder de hardware da GPU** (NVIDIA NVENC, AMD AMF, Intel Quick Sync) num pipeline **zero-copy** | É o que Medal, OBS e ShadowPlay fazem. O encoder é um bloco dedicado do chip, então o impacto no FPS é mínimo. |
-| Buffer de replay | Fila circular **na RAM** de pacotes já codificados, com keyframe a cada 1 s | Sem escrita contínua em disco. O corte do clipe sai em milissegundos, sem recodificar. |
-| Áudio | **WASAPI process loopback**: uma captura para o processo do jogo e outra para o processo do Discord, em **faixas separadas** | Grava apenas esses dois apps. Spotify, navegador e notificações ficam de fora. |
-| Sincronização | Carimbo de tempo **QPC** em cada frame e pacote de áudio + **medição contínua da diferença de relógio** entre os PCs (estilo NTP, direto entre eles) | Precisão esperada de poucos ms, abaixo de 1 frame a 60 fps (16,7 ms). O editor tem ajuste fino de ±1 frame. |
-| Rede | **WebRTC DataChannel** P2P criptografado + servidor mínimo de *signaling* + **TURN** de reserva | Os vídeos vão direto de um PC para o outro, criptografados. O servidor nunca vê o conteúdo. |
-| Prévia | Amigo envia na hora uma **prévia leve (720p)**. Depois de você escolher início e fim, vem **só o trecho escolhido em qualidade total** | A prévia chega rápido e economiza upload, o que não atrapalha o ping de quem ainda está jogando. |
-| Stack | **Núcleo em Rust** (windows-rs + FFmpeg/libavcodec em build LGPL) + **interface em Tauri 2** (WebView2) | Desempenho nativo, segurança de memória no código de rede e app leve. |
-| Distribuição | **Microsoft Store** (cadastro gratuito para pessoa física desde set/2025; a Microsoft assina o pacote) | Resolve a assinatura de código e as atualizações automáticas. Também dá a identidade de pacote exigida para remover a borda amarela da captura. |
+| Captura de vídeo | **Windows.Graphics.Capture (WGC)** na **janela do jogo**, com fallback para captura do monitor só quando o jogo está em fullscreen exclusivo | É o método mais eficaz entre os que **não injetam código no jogo**. OBS e Medal têm métodos mais leves (hooks), mas eles dependem de exceções nos anti-cheats que um app novo não tem. |
+| Codificação | Encoder de hardware (NVENC, AMF ou Quick Sync), com a imagem sempre na GPU | Todo gravador moderno faz assim. O impacto no FPS é mínimo. |
+| Buffer | Fila circular **na RAM** de pacotes já codificados, com keyframe a cada 1 s e sem B-frames | Mesmo modelo do OBS. O corte do clipe sai em milissegundos, sem recodificar. |
+| **Pós-roll** | **"Fixar e coletar"**: ao apertar, o trecho anterior é fixado no buffer, e o app continua gravando até T + depois + margem antes de fechar o clipe | Esperar e só então salvar não funciona, porque o começo do clipe já teria saído do buffer. O Medal (Game API) e o Overwolf fazem pós-roll desse jeito. |
+| Áudio | WASAPI *process loopback*: jogo e Discord em faixas separadas | Grava só esses dois apps. O OBS e o Medal usam a mesma API. |
+| **Relógio** | **Relógio Global DuoClip** = QPC disciplinado para UTC por um cliente **NTS** próprio (NTP.br + Cloudflare), com refino P2P durante a sessão | Não depende do relógio do Windows, que no PC doméstico sincroniza a cada ~9 h e pode dar saltos. Todos os clipes de todo mundo ficam na mesma linha do tempo. |
+| **Armazenamento temporário** | **Bucket Cloudflare R2** com prefixo por clipe, expiração em ≤ 72 h, URLs assinadas curtas e **criptografia ponta a ponta**. P2P direto como acelerador. | Funciona com o amigo offline ou atrás de CGNAT. Para 1.000 usuários custa **≈ US$ 2–4/mês**, contra US$ 140–220 nos provedores em São Paulo, porque o R2 não cobra download. |
+| Segurança | Sem injeção, sem driver, sem administrador. Consentimento explícito para o amigo disparar a captura. Tudo criptografado. | É requisito do projeto, e também é o que nos diferencia do Medal (que injeta). |
+| Stack | Rust (núcleo) + Tauri 2 (interface) + WebRTC + Cloudflare Worker (credenciais e limpeza) | Desempenho, segurança de memória e backend mínimo. |
 
 ---
 
@@ -50,481 +67,645 @@
 
 **Funcionais**
 
-- **R1:** gravar continuamente (em buffer) a janela do jogo em alta qualidade, com impacto mínimo no FPS.
-- **R2:** gravar o áudio do jogo e as vozes do Discord. Microfone próprio fica como opção, desligado por padrão.
-- **R3:** uma tecla ou botão de clipe que, apertado por qualquer um, dispara o clipe **nos dois PCs**.
-- **R4:** o clipe inclui *N* segundos antes e *M* segundos depois do aperto (configurável).
-- **R5:** os vídeos dos dois ficam sincronizados no tempo.
-- **R6:** pré-visualização com os dois vídeos, para escolher início e fim e o layout (lado a lado, vertical, PiP...).
-- **R7:** funcionar com qualquer jogo, qualquer GPU moderna, no Windows 10/11 ("universal").
+- **R1:** gravar continuamente a janela do jogo, em alta qualidade e com impacto mínimo no FPS.
+- **R2:** gravar o áudio do jogo e as vozes do Discord. O microfone próprio é uma faixa opcional.
+- **R3:** quando qualquer um aperta a tecla de clipe, o clipe é salvo **em todos os PCs da sessão**.
+- **R4:** o clipe inclui *N* s antes e ***M* s depois** do aperto, com margens extras para o ajuste no editor.
+- **R5:** todos os clipes ficam na **mesma linha do tempo global**.
+- **R6:** prévia com os POVs, para escolher início, fim e layout.
+- **R7:** funcionar com qualquer jogo, com GPUs NVIDIA, AMD e Intel, no Windows 10 22H2 e no Windows 11.
+- **R8:** os clipes temporários trocados entre amigos ficam num **bucket** e são apagados automaticamente.
 
 **Não funcionais**
 
-- **Segurança:** sem injeção no jogo, sem driver, sem precisar de administrador. Tudo criptografado na rede.
-- **Privacidade:** captura só o jogo e o Discord, nunca a área de trabalho inteira por padrão.
-- **Desempenho:** perda de FPS abaixo de ~3–5% (meta a validar com medição) e uso de rede que não piore o ping.
+- **Segurança:** sem injeção, sem admin, criptografia de ponta a ponta.
+- **Privacidade:** só o jogo e o Discord. A captura do monitor inteiro só acontece como opção explícita.
+- **Desempenho:** perda de FPS abaixo de 3–5%, a ser medida, e transferências que não pioram o ping.
 
 ---
 
 ## 3. O que já existe no mercado
 
-Nenhuma ferramenta encontrada **dispara o clipe nos dois PCs ao mesmo tempo com sincronia por relógio**. O que existe:
+Nenhuma ferramenta **dispara o clipe em vários PCs ao mesmo tempo com sincronia por relógio**:
 
-| Produto | O que faz | Diferença para a nossa ideia |
+| Produto | O que faz | Diferença |
 |---|---|---|
-| **Medal** — "Clips You're In" / tag de squad | Encontra clipes que *outros* jogadores fizeram e em que você aparece. Depende de vincular conta Riot, Roblox ou Steam. No CS2, marca o time automaticamente. | Não grava a tela do amigo quando *você* aperta, e não sincroniza os dois POVs num editor. |
-| **Medal Sessions** (2021) | Espaço compartilhado para gravar e editar clipes em grupo | Não encontrei confirmação de que ainda funciona assim hoje. |
-| **MultiView Sync Player** (Microsoft Store) | Abre até 4 vídeos locais e alinha pela forma de onda do áudio ("Auto Sync") | Funciona *depois* da gravação, e cada um precisa gravar e enviar o arquivo. |
-| **VOD Review** | Revisão de partidas com vários POVs, com início ajustado manualmente e correção de drift | Feito para análise de VODs. Não grava nada. |
-| **MultiPOV** | Junta lives e VODs de vários streamers e alinha pelo som | Só funciona com YouTube, Twitch e Kick. Não usa arquivos locais. |
-| **Multi-video-syncer** (GitHub) | Alinha vídeos locais por "pontos âncora" marcados quadro a quadro | Projeto de desenvolvedor, com alinhamento manual. |
+| **Medal**: "Clips You're In" e tag de squad | Encontra clipes que *outros* fizeram e em que você aparece | Não grava a tela do amigo quando você aperta |
+| **Allstar** | Renderiza clipes a partir do **demo** da partida (CS2, Dota 2, LoL, Fortnite) | Sincronia perfeita, mas não é a tela real, não tem voz do Discord e só funciona em jogos com demo |
+| **MultiView Sync Player** e **VOD Review** | Alinham vídeos *depois*, pelo áudio ou manualmente | Cada um precisa gravar e enviar o próprio arquivo |
+| **MultiPOV** | Junta lives e VODs (YouTube, Twitch, Kick) pelo som | Não usa arquivos locais |
+| **Overwolf/Outplayed** | Clipes automáticos por evento, com segundos antes e depois | Só o seu POV |
 
-**Conclusão:** há espaço para o produto. O diferencial é o **gatilho compartilhado em tempo real** e a **sincronia automática por relógio**, sem precisar de alinhamento manual depois.
+> 💡 **Ideia extra:** para CS2 (e Dota 2), dá para oferecer um modo "sincronia perfeita" opcional que renderiza
+> cada POV a partir do demo da partida, como o Allstar, e coloca por cima a voz gravada localmente usando o relógio global.
 
 ---
 
-## 4. Captura de vídeo
+## 4. Captura de vídeo: o que OBS e Medal usam e qual é o mais eficaz
 
-### 4.1 Os três métodos de captura no Windows
+### 4.1 Métodos que existem no Windows
 
-| Método | Como funciona | Prós | Contras |
+| Método | Como funciona | Custo para o jogo | Disponível para um app novo e seguro? |
 |---|---|---|---|
-| **Windows.Graphics.Capture (WGC)** | API do Windows (desde o Win10 1803) que entrega os frames de uma **janela** ou de um **monitor** como textura Direct3D 11 | Não toca no processo do jogo. Captura só a janela escolhida. Funciona entre GPUs (notebooks híbridos). Captura frames de *frame generation* (um relato do OBS mostrou que o DXGI capturava antes do Frame Generation da NVIDIA e o WGC corrigia). | Borda amarela (removível; veja 4.3). Não funciona com fullscreen exclusivo "de verdade". |
-| **DXGI Desktop Duplication** | Copia o **monitor inteiro** já composto | Independe da API gráfica do jogo | Pega tudo que está na tela (notificações, outras janelas), o que é ruim para privacidade. Precisa rodar na mesma GPU do monitor. Há relatos de que derruba o FPS do jogo. |
-| **Game hook (injeção)**, como o "Game Capture" do OBS | Injeta uma DLL no jogo e intercepta as chamadas DirectX, Vulkan ou OpenGL | Muito eficiente e funciona em fullscreen exclusivo | **Injeção de código é exatamente o que anti-cheats procuram.** O OBS é tolerado por ser conhecido e ter certificado próprio, mas um app novo seria bloqueado ou poderia gerar ban. Atualizações do Vanguard (Valorant/LoL) já chegaram a quebrar o Game Capture do próprio OBS. Também pode exigir administrador. |
+| **Captura no driver** (NVIDIA NvFBC, AMD) | O driver copia o framebuffer direto para o encoder | O mais baixo | ❌ O NvFBC foi descontinuado e é restrito na GeForce (exige a chave da NVIDIA e admin). A API da AMD só captura o monitor inteiro. |
+| **Hook injetado** (OBS "Game Capture", padrão do Medal) | Uma DLL dentro do jogo copia cada frame para uma textura compartilhada | Muito baixo | ❌ É **injeção de código**. Só funciona com anti-cheat porque OBS e similares têm o **certificado** liberado. O próprio OBS avisa que o CS2 pode exigir `-allow_third_party_software` para o Game Capture funcionar. |
+| **WGC de janela** (Windows.Graphics.Capture) | API oficial do Windows que entrega os frames da janela | Baixo | ✅ **Sim.** Não toca no processo do jogo e pega só a janela. |
+| **DXGI Desktop Duplication / WGC de monitor** | Copia o monitor inteiro já composto | Médio | ⚠️ Sim, mas captura **tudo** que está na tela (notificações, DMs). Fica só como fallback. |
+| **BitBlt** | Cópia pela CPU (GDI) | Alto | ⚠️ Antigo e pesado para jogos |
 
-**Decisão: WGC em modo janela.** Isso atende ao mesmo tempo os requisitos de segurança (sem injeção), privacidade (só a janela do jogo) e universalidade (qualquer API gráfica: DX11, DX12, Vulkan, OpenGL). Pela borda amarela e pelo comportamento descrito na documentação, o "Advanced Window Capture" do Medal parece ser exatamente isso, embora o Medal não confirme publicamente.
+### 4.2 O que o OBS usa (conferido no código-fonte)
 
-### 4.2 Detalhes importantes do WGC
+- **Game Capture** é **injeção de DLL**: `graphics-hook64.dll` entra no jogo via `SetWindowsHookEx`, ou via `CreateRemoteThread`, e intercepta `Present`. A KB do OBS diz que é o método "mais eficiente".
+- **Window Capture** tem os modos "Modern (WGC)" e "Legacy (BitBlt)". O **automático prefere BitBlt** e só escolhe WGC para navegadores, UWP e algumas classes de janela.
+- **Display Capture** usa **DXGI Desktop Duplication** e muda para WGC em notebooks híbridos.
+- Quando o jogo bloqueia o hook (Destiny 2, Roblox...), o próprio OBS manda **usar Window Capture (WGC)**.
+- **Áudio por aplicativo:** *process loopback*, o mesmo que propomos.
+- **Relógio:** QPC em tudo.
+- **Replay buffer:** fila na RAM, **sem pós-roll**.
 
-- **Carimbo de tempo:** cada `Direct3D11CaptureFrame` traz `SystemRelativeTime`, o valor do **QPC** (QueryPerformanceCounter) no momento em que o compositor renderizou o frame. Esse é o relógio usado em toda a sincronização (seção 7).
-- **Só a janela:** a captura de janela pega o conteúdo da própria janela do jogo. Outras janelas por cima, como o próprio app ou o Discord, não aparecem. A exceção são *overlays desenhados dentro do jogo* (Steam, Discord e outros, dependendo do modo), que fazem parte da imagem do jogo.
-- **Cursor:** `IsCursorCaptureEnabled` (Win10 2004+) permite esconder o cursor do Windows. Em jogos, normalmente queremos desligado.
-- **Taxa de captura:** no Windows 11 24H2 (build 26100) existe `MinUpdateInterval`, que limita a taxa de frames. Um teste da comunidade mostra que 17 ms ≈ 60 fps e 25 ms ≈ 40 fps, e que valores abaixo de 1 ms se comportam de forma estranha. Use o limite para não capturar 240 fps quando a gravação é a 60.
-- **Tela parada:** no 24H2, o WGC pode **deixar de entregar frames quando o conteúdo não muda**. O encoder deve repetir o último frame para manter a taxa constante (CFR), senão a linha do tempo fica com "buracos".
-- **Fullscreen exclusivo:** a captura de janela não funciona nesse modo (o Medal documenta a mesma limitação). Hoje, a maioria dos jogos em "tela cheia" roda na prática como *borderless flip model*, graças às *Fullscreen Optimizations* do Windows, e aí funciona. O app deve detectar a falha e pedir "use Tela cheia sem bordas". Opcionalmente, pode oferecer como plano B a captura do **monitor** via WGC, com aviso de privacidade.
-- **Janelas protegidas:** se um app ou jogo usar `SetWindowDisplayAffinity` (`WDA_EXCLUDEFROMCAPTURE` / `WDA_MONITOR`), a janela sai preta ou some da captura. Isso deve ser **respeitado**; contornar seria antiético e arriscado.
-- **OpenGL (ex.: Minecraft Java):** o Medal relata efeitos colaterais da captura de janela (cursor invisível, borda). Vale testar caso a caso.
+### 4.3 O que o Medal usa (pesquisa a fundo)
 
-### 4.3 A borda amarela
+- O **padrão é um hook injetado derivado do OBS**:
+  - o próprio suporte do Medal diz que *"injeta nos seus jogos para dar o overlay e capturar a gameplay"*;
+  - logs reais de 2023 mostram `OBSInjectionState` e *offsets* no formato exato do OBS;
+  - o recorder de 2026 ainda tem as classes `MedalEncoder.OBS.HookInterface` e `PreferGameCapture=true`.
+- **"Advanced Window Capture" = WGC**: o comando interno é `set.windowsGraphicsCapture`, aparece a borda amarela e não funciona em fullscreen exclusivo. É **opcional**, e o Medal o recomenda para jogos como CS2.
+- Também há uma captura de janela "padrão" baseada em DXGI e uma captura de tela inteira (Desktop Capture).
+- Não há evidência de que o hook do Medal esteja na lista de liberados de nenhum anti-cheat. O próprio Medal lista o **FACEIT Anti-Cheat** como algo que interfere no hook.
+- **Confiança:** alta para o padrão de 2023 e média para 2026. Os detalhes e o procedimento para confirmar estão no [anexo](anexo-metodos-de-captura-obs-medal.md#2-medal-pesquisa-a-fundo).
 
-- Por padrão, o Windows desenha uma borda amarela na janela capturada (indicador de privacidade). Ela **não aparece no vídeo**, só na tela.
-- Para removê-la, é preciso o **build 20348+**, `GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless)` (que mostra um pedido de consentimento ao usuário) e a capability **`graphicsCaptureWithoutBorder`** no **manifesto de pacote** (MSIX). Depois disso, basta definir `IsBorderRequired = false`.
-- Se o usuário negar, a propriedade é aceita mas ignorada, e a borda continua. Detecte a disponibilidade em tempo de execução com `ApiInformation.IsPropertyPresent`, como o OBS faz.
-- O Windows 11 também tem uma configuração por app para isso ("Captura de gráficos" nas configurações de privacidade).
-- **Implicação:** distribuir como **pacote MSIX** (Store ou sideload) é o caminho natural (seção 13).
+### 4.4 E os outros?
+
+| Ferramenta | Método |
+|---|---|
+| NVIDIA ShadowPlay | NvFBC (driver) |
+| AMD ReLive | Driver |
+| Steam Game Recording | Provavelmente hook do overlay da Steam. Grava em disco e você escolhe o trecho depois. |
+| Discord | DLL injetada por padrão, WGC como opção (deve virar padrão no Win11) |
+| Overwolf / Outplayed | Motor baseado no OBS (game capture) |
+| SteelSeries Moments | "Game Capture (WGC)" no Windows 11 |
+| Allstar / Eklipse | Não gravam localmente (demo e VOD na nuvem) |
+
+### 4.5 Veredito: a captura de janela (WGC) é a mais eficaz?
+
+**Entre os métodos que um app novo pode usar com segurança, sim.**
+
+- Os métodos mais leves que existem (driver e hook) **não estão disponíveis** para nós. O NvFBC é restrito e descontinuado. O hook exige uma exceção nos anti-cheats que só OBS e similares têm, e atrairia ban e bloqueio. Até o OBS teve problemas de compatibilidade quando trocou o certificado na versão 31.
+- O WGC custa pouco. A medição do OBS deu ~200–800 µs de CPU por frame e um pouco menos de GPU que o BitBlt.
+- O WGC **não injeta nada**, grava **só a janela do jogo** e é para onde Discord, SteelSeries e o próprio Medal estão indo.
+- **Não existe benchmark independente** comparando todos os métodos em FPS. Vamos medir nós mesmos com **PresentMon** na Fase 0 (CS2, Valorant, Fortnite, LoL, Minecraft e Roblox, em hardware médio do Brasil).
+
+### 4.6 Cadeia de fallback
+
+1. **WGC da janela do jogo** (padrão).
+2. **Jogo em fullscreen exclusivo "de verdade":** o WGC mostra a área de trabalho em vez do jogo. Nesse caso:
+   - detectar sem admin: `SHQueryUserNotificationState == QUNS_RUNNING_D3D_FULL_SCREEN`, retângulo da janela igual ao do monitor, ou ausência de frames com o jogo em primeiro plano;
+   - **primeiro, pedir ao usuário** para mudar para "tela cheia sem bordas";
+   - se ele preferir manter, usar **DDA do monitor recortado na janela** (AMF Display Capture em placas AMD), **com aviso de privacidade** e **sem upload automático**.
+3. **Notebook híbrido:** WGC de monitor quando o DDA não enxerga a saída, a mesma regra do OBS.
+4. **Banco de dados de jogos** atualizável remotamente (o Medal faz isso), com o método que funciona em cada título.
+
+### 4.7 Configuração do WGC (melhorando o que o OBS faz)
+
+- Usar `Direct3D11CaptureFramePool.CreateFreeThreaded`, com 2–3 buffers numa thread dedicada. Passar o frame **direto** para a conversão de cor e o encoder, evitando a cópia extra que o OBS admite fazer.
+- Configurar e medir `MinUpdateInterval` (Win11 24H2+). Sem ele, há relatos de captura limitada a ~50–60 fps.
+- No Windows 11 24H2, o WGC pode parar de entregar frames quando a imagem não muda. Nesse caso, repetir o último frame para manter a taxa constante.
+- `IsCursorCaptureEnabled(false)` em jogos (a mira é desenhada pelo próprio jogo).
+- Timestamp de cada frame: `SystemRelativeTime` (QPC). Atenção: é o momento da **composição pelo DWM**, então é preciso **calibrar o atraso áudio/vídeo** por fonte (um teste mediu de 18 a 44 ms).
+- Respeitar janelas protegidas (`WDA_EXCLUDEFROMCAPTURE`). Também não dá para capturar janelas de jogos rodando como admin sem o app também ser admin, e isso deve ser avisado na interface.
+- **HDR:** detectar o espaço de cor com `IDXGIOutput6::GetDesc1`, capturar em FP16 e aplicar *tone-mapping* para SDR na GPU. O Medal tem um "HDR Compatibility" justamente por causa de clipes estourados.
+- **Mudança de resolução** (alt-enter): codificar numa **resolução de saída fixa** escolhida no início da sessão, escalando na GPU, para o encoder não reiniciar no meio de um clipe.
+
+### 4.8 Borda amarela, Windows 10 e empacotamento
+
+- Remover a borda exige o **build 20348+**, ou seja, o **Windows 11**. O Windows 10 22H2 é o build 19045, então **no Windows 10 a borda amarela fica sempre visível** enquanto o app grava. Ela **não aparece no vídeo**, só na tela.
+- No Windows 11 o fluxo é: `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` (pede consentimento ao usuário) e depois `IsBorderRequired(false)`. A Microsoft documenta que é preciso a capability `graphicsCaptureWithoutBorder` no **manifesto de pacote**. O OBS, que não é empacotado, chama a mesma API, mas **não está documentado** se a remoção funciona sem pacote. **Protótipo de 1 dia:** testar (a) app sem pacote, (b) sem pacote com a opção do Windows 11 ligada e (c) pacote esparso/MSIX com a capability.
+- **No Windows 10:** oferecer "WGC com borda" (padrão) ou "DDA recortado" (sem borda, mas pega o que estiver por cima do jogo).
 
 ---
 
-## 5. Codificação por hardware e buffer de replay
-
-### 5.1 Pipeline zero-copy (tudo na GPU)
+## 5. Codificação por hardware
 
 ```mermaid
 flowchart LR
-    A["WGC: textura D3D11 BGRA + QPC"] --> B["Conversão de cor na GPU<br/>BGRA → NV12 (D3D11 VideoProcessor)"]
+    A["WGC: textura D3D11 + QPC"] --> B["GPU: conversão BGRA para NV12<br/>(+ tone-map HDR, escala fixa)"]
     B --> C["Encoder de hardware<br/>NVENC / AMF / QSV"]
-    C --> D["Pacotes H.264/HEVC<br/>com PTS no relógio da sessão"]
-    D --> E["Buffer circular na RAM"]
-    F["WASAPI process loopback<br/>jogo e Discord"] --> G["Encoder de áudio<br/>AAC/Opus, 1 faixa por fonte"]
+    C --> D["Pacotes H.264<br/>PTS em QPC"]
+    D --> E["Ring buffer na RAM"]
+    F["WASAPI process loopback<br/>jogo e Discord"] --> G["AAC/Opus<br/>1 faixa por fonte"]
     G --> E
-    E -->|"tecla de clipe"| H["Corte por keyframe +<br/>remux MP4, sem recodificar"]
+    E -->|"tecla de clipe"| H["Fixar e coletar<br/>(seção 6)"]
 ```
 
-- **A imagem nunca vai para a CPU.** Copiar a textura para a RAM é o que deixa gravadores ruins pesados. O wiki do FFmpeg ressalta que mover frames para a CPU adiciona overhead em comparação com manter tudo na GPU.
-- **Acesso aos encoders:** o caminho mais prático é o **FFmpeg/libavcodec** (`h264_nvenc`, `hevc_nvenc`, `av1_nvenc`, `h264_amf`, `h264_qsv`...) com frames de hardware D3D11. O filtro `ddagrab` do FFmpeg já demonstra esse padrão (texturas D3D11 entregues direto ao NVENC). Outra opção é usar os SDKs nativos (NVIDIA Video Codec SDK, AMD AMF, Intel oneVPL), como faz o OBS.
-- **Cuidado com o Media Foundation:** em pelo menos um teste documentado, o driver da NVIDIA não registrou um encoder H.264 de hardware via MFT. Depender só do Media Foundation pode cair em codificação por software em algumas máquinas.
-- **Atalho para protótipo:** o **FFmpeg 8.1** ganhou o filtro **`gfxcapture`** (WGC por janela). Serve para um protótipo rápido na linha de comando antes de escrever o pipeline próprio. Ainda é preciso verificar se ele entrega frames D3D11 sem cópia para a CPU.
-
-### 5.2 Configuração de codificação sugerida
-
-| Parâmetro | Valor sugerido | Observação |
+| Parâmetro | Valor | Observação |
 |---|---|---|
-| Codec de gravação | **H.264** no MVP; HEVC/AV1 como opção | H.264 toca em qualquer lugar (WebView2, WhatsApp, Discord). AV1 e HEVC geram arquivos menores, mas exigem GPU mais nova e têm compatibilidade de reprodução pior. |
-| Resolução / FPS | Nativa (ou 1080p) a 60 fps | Use `MinUpdateInterval` para não capturar além da taxa de gravação. |
-| Controle de taxa | VBR ou CQP com teto (~30–50 Mbps em 1080p60) | Com bitrate constante, o tamanho do buffer é previsível. Com CQP, é preciso um limite de memória. |
-| **Intervalo de keyframe** | **1 s** | Cortes precisos e clipes com duração exata. Intervalos longos ou "0" causam problemas no replay buffer do OBS. |
-| B-frames | 0–2 | Menos latência e cortes mais simples |
-| Prioridade | Threads de captura e codificação **abaixo do normal**. Nunca competir com o jogo. | |
-| Segunda codificação "proxy" (opcional) | 720p a ~3 Mbps em paralelo | Deixa a prévia pronta na hora, sem transcodificar. Verifique o limite de sessões simultâneas do encoder da GPU. |
+| Codec | **H.264** (HEVC e AV1 opcionais) | Compatível com tudo (WebView2, WhatsApp, Discord) |
+| Resolução / FPS | Saída fixa (nativa ou 1080p) a 60 fps | Evita reiniciar o encoder no meio de um clipe |
+| Taxa | VBR ou CQP com teto (~30–50 Mbps em 1080p60) | Manter também um **limite em MB** no buffer |
+| Keyframe | **1 s, GOP fechado** | Cortes com no máximo 1 s de folga |
+| B-frames | **0** | Menor latência do encoder e corte final trivial |
+| Prévia (proxy) | **Transcodificada sob demanda** a partir do trecho salvo (decode e encode em hardware) | Não manter uma segunda codificação contínua, porque o limite de sessões simultâneas de NVENC na GeForce é compartilhado com Discord e ShadowPlay |
+| GPU sem encoder (RX 6500 XT/6400, GT 1030) | Usar o encoder da GPU integrada, se houver. Senão, x264 720p30 "superfast" com aviso. | Essas placas não têm encoder de hardware |
+| Notebook híbrido | Codificar na GPU dona da superfície do WGC, ou fazer uma cópia GPU→GPU explícita, conforme a medição | Evitar uma leitura escondida pela CPU |
 
-### 5.3 Buffer de replay
-
-- **Estrutura:** uma fila de pacotes codificados `(pts_sessão, é_keyframe, faixa, bytes)`. A fila descarta do início em blocos de GOP, ou seja, de keyframe a keyframe.
-- **Extração de um clipe `[início, fim]`:** encontrar o último keyframe ≤ `início`, copiar os pacotes até `fim` e fazer o remux para MP4 (*stream copy*). Isso leva milissegundos e não perde qualidade.
-- **Uso de RAM** (bitrate × duração ÷ 8):
-
-| Bitrate | 30 s | 60 s | 120 s |
-|---|---|---|---|
-| 20 Mbps | 75 MB | 150 MB | 300 MB |
-| 30 Mbps | 113 MB | 225 MB | 450 MB |
-| 50 Mbps | 188 MB | 375 MB | 750 MB |
-
-- **Padrão sugerido:** buffer de **60 s**. A janela salva por clipe é de **30 s antes + 10 s depois** do aperto (configurável), e o corte inicial no editor é de **10 s antes + 5 s depois**.
-- Se o usuário nunca apertar o botão, nada é escrito em disco (o Medal faz o mesmo).
-
-### 5.4 Como medir o impacto
-
-- Use o **PresentMon** (Intel/Microsoft) para medir frame time com o app ligado e desligado, no mesmo jogo e na mesma cena.
-- Teste nos modos borderless e "tela cheia", em GPUs NVIDIA, AMD e Intel, e em notebook híbrido.
-- Meta: perda de FPS médio < 3–5% e nenhum aumento perceptível no 1% low.
+O caminho mais prático é o **FFmpeg (libavcodec, build LGPL)** com `h264_nvenc`, `h264_amf` ou `h264_qsv` e frames D3D11. O FFmpeg 8.1 também tem o filtro `gfxcapture` (WGC), útil num protótipo rápido.
 
 ---
 
-## 6. Áudio: só o jogo + Discord
+## 6. Buffer de replay e gravação além do aperto (pós-roll)
 
-### 6.1 A API certa: process loopback
+### 6.1 Como as ferramentas fazem
 
-O Windows permite capturar o áudio **de um processo específico e de seus processos filhos**, sem pegar o resto do sistema:
-
-- `ActivateAudioInterfaceAsync` com `AUDIOCLIENT_ACTIVATION_PARAMS` → `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`
-- `AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS { TargetProcessId, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE }`
-- Os parâmetros vão num `PROPVARIANT` do tipo BLOB. Esse cliente **não** vem do `IMMDeviceEnumerator` tradicional.
-- **Versão do Windows:** a documentação oficial exige o **build 20348+** (Windows 11). Na prática, OBS e GStreamer usam desde o **19041 (Win10 2004)**. O OBS documenta "Application Audio Capture" para o Windows 10 2004+ e o Windows 11. A recomendação é tentar ativar em tempo de execução e, se falhar, avisar o usuário.
-- Se o processo-alvo não estiver tocando nada, a captura recebe **silêncio**, o que é normal.
-- A Microsoft tem um exemplo oficial: *ApplicationLoopback* (Windows-classic-samples).
-
-### 6.2 Duas capturas, faixas separadas
-
-| Faixa | Fonte | Como encontrar o processo |
+| Ferramenta | Grava depois do aperto? | Como |
 |---|---|---|
-| 1 — Jogo | PID do processo dono da janela capturada (`GetWindowThreadProcessId`) | Automático, a partir da janela escolhida |
-| 2 — Discord | Processo **raiz** de `Discord.exe` (também `DiscordPTB.exe` e `DiscordCanary.exe`) | Pegar o `Discord.exe` cujo pai não é `Discord.exe`. Com *INCLUDE_TARGET_PROCESS_TREE*, todos os processos filhos do Electron entram junto. |
-| 3 — Microfone (opcional) | Dispositivo de entrada padrão, ou o mesmo configurado no Discord | **Desligado por padrão** (veja 6.3) |
+| **OBS** | ❌ Não nativo | "Salvar" anota o instante (QPC) e corta quando o encoder entrega um pacote ≥ esse instante. Pós-roll só por scripts ou gambiarras. |
+| **Medal** | ⚠️ O atalho manual não. **A Game API sim.** | `captureDelayMs` = *"ms que o Medal espera depois do pedido antes de tirar o snapshot do replay buffer"* |
+| **Overwolf / Outplayed** | ✅ Sim | `capture(pastDuration, futureDuration)`, buffer na memória, uma captura por vez. O Outplayed tem controles de "segundos antes/depois" por evento. |
+| **Steam** | ✅ Indiretamente | Grava continuamente em disco e você escolhe o trecho na linha do tempo depois. A Timeline API sugere clipes "um pouco antes e depois do evento". |
+| NVIDIA, AMD, Xbox Game Bar, SteelSeries | ❌ Só o passado | Gravação longa ou marcadores |
 
-- Ficam **de fora automaticamente:** música, navegador, notificações do Windows e outros apps.
-- **Discord no navegador:** não suportado no MVP, porque capturaria o navegador inteiro (outras abas incluídas).
-- Há relatos esporádicos de "Application Audio Capture não pega o Discord" no OBS. Provavelmente o processo errado da árvore foi selecionado. Por isso o alvo deve ser o **processo raiz**. Isso precisa ser validado na Fase 0.
-- **Não** grave o "áudio da área de trabalho". Além de pegar tudo, isso duplica as vozes do Discord (eco), um problema comum relatado por usuários do OBS.
+### 6.2 Por que não dá para "esperar e salvar"
 
-### 6.3 Detalhe importante sobre as vozes
+Um buffer de 60 s que espera M segundos para salvar **perde os primeiros M segundos** do trecho anterior, porque eles saem do buffer enquanto o app espera. Por isso, no instante do pedido, o trecho anterior precisa ser **fixado** (*pin*). É o que o OBS faz internamente ao salvar: ele pega referências contadas dos pacotes enquanto o buffer continua girando.
 
-O Discord **não toca a sua própria voz para você**. Por isso:
+### 6.3 Máquina de estados "fixar e coletar" (igual nos dois PCs)
 
-- **No seu PC**, a faixa do Discord tem a voz do **amigo**. A sua voz não está lá.
-- **No PC do amigo**, a faixa do Discord tem a **sua** voz, mas com o **atraso da rede e do buffer do Discord** (dezenas a centenas de ms).
+```mermaid
+stateDiagram-v2
+    [*] --> PEDIDO: tecla ou ClipRequest
+    PEDIDO --> FIXADO: referenciar os pacotes desde o keyframe ≤ início
+    FIXADO --> COLETANDO: continuar anexando os pacotes ao vivo
+    COLETANDO --> FINALIZANDO: todas as faixas passaram do fim + margem, ou timeout (fim + 3 s), ou o jogo fechou
+    FINALIZANDO --> PRONTO: MP4 final + metadados de cobertura
+    PRONTO --> [*]
+```
 
-Consequências para o editor:
+- **Fim da coleta:** quando **todas as faixas** (vídeo, áudio do jogo, Discord) emitiram pacotes com timestamp ≥ fim. É a regra do OBS (`sys_dts ≥ save_ts`) generalizada, e ela absorve automaticamente a latência do encoder.
+- **Janela, no relógio global:**
+  - `início = T − antes − margem`;
+  - `fim = T + depois + margem`;
+  - no relógio local, cada ponta ainda é alargada pela incerteza ε da sincronia;
+  - o início é ajustado **para trás até o keyframe anterior**.
+- **Keyframe forçado (opcional):** no aperto, forçar um IDR (NVENC `NV_ENC_PIC_FLAG_FORCEIDR` com `enablePTD=1`, AMF `ForcePictureType=IDR`, oneVPL `MFX_FRAMETYPE_IDR`). Assim os fragmentos dos dois PCs começam alinhados.
 
-1. **Melhor qualidade de sincronia:** cada um grava o **próprio microfone** (faixa 3). No vídeo final, entram o mic de cada um no tempo real (perfeitamente sincronizado pelo relógio da sessão) e o áudio do jogo do POV em destaque.
-2. **Sem microfone:** o editor usa a faixa do Discord de cada PC (sua voz sai do PC do amigo, e a voz do amigo sai do seu). É preciso compensar o atraso do Discord. Se ao menos um dos dois gravou o mic, dá para **medir esse atraso automaticamente** por correlação cruzada entre o mic de A e a faixa do Discord de B.
-3. **Nunca** misture o mic de A com a faixa do Discord de B ao mesmo tempo: a mesma voz sairia duas vezes, com eco.
-4. **Privacidade:** a faixa de mic grava mesmo quando você não está transmitindo no Discord (push-to-talk). Por isso fica desligada por padrão, com aviso claro.
+### 6.4 Valores padrão sugeridos
 
-### 6.4 Carimbo de tempo do áudio
+| Parâmetro | Padrão | Faixa |
+|---|---|---|
+| Antes do aperto | **30 s** | 10–120 s |
+| **Depois do aperto** | **10 s** | 0 / 5 / 10 / 15 / 30 s |
+| **Margem oculta** (folga para o editor) | **+2 s antes e +2 s depois**, alargada automaticamente para máx(2 s, 3ε) quando a sincronia está ruim | — |
+| Corte inicial no editor | T−10 s → T+5 s | — |
+| Ring buffer na RAM | 60 s (com teto de ~600 MB) | ≥ antes + margem + GOP + ~25 s de tolerância a atraso do pedido |
+| Timeout de finalização | fim + 3 s | — |
+| Duração máxima de um clipe (com extensões) | 180 s | — |
+| Clipes ativos ao mesmo tempo | 4 | — |
 
-`IAudioCaptureClient::GetBuffer` devolve, para cada pacote, a posição em amostras **e o QPC** (em unidades de 100 ns) do primeiro frame. É o **mesmo relógio** do vídeo, então áudio e vídeo ficam alinhados sem adivinhação. Também é preciso:
+### 6.5 Buckets locais em disco (crash-safe)
 
-- tratar as flags `AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY` e `TIMESTAMP_ERROR`;
-- reamostrar levemente (drift entre o cristal da placa de som e o QPC), recalibrando periodicamente;
-- ler cada pacote uma única vez e guardar o QPC (leituras repetidas não são confiáveis em todas as implementações).
+- Assim que um clipe é **fixado**, ele é gravado aos poucos, numa thread de baixa prioridade, em `%LOCALAPPDATA%\DuoClip\buckets\<clip_id>\`. O formato é **MP4 fragmentado** (um fragmento por GOP) mais um pequeno journal JSON.
+  - Se o app travar ou o jogo fechar no meio do pós-roll, o arquivo continua tocável até o último fragmento (o FFmpeg documenta isso, e é o princípio do "Hybrid MP4" do OBS).
+  - Depois que um fragmento está no disco, a referência na RAM é liberada, então pós-rolls longos não enchem a memória.
+- **Modo opcional "histórico longo"** (estilo Steam): um ring **em disco** de segmentos de 10 s, com 10–30 min de histórico.
+  - Custo: ~22,5 GB/h escritos no SSD a 50 Mbps, por isso é opção.
+  - A pasta é apagada ao sair e ao iniciar, e é criptografada, porque contém a voz dos amigos.
+- Esses mesmos fragmentos são a unidade enviada ao **bucket na nuvem** ([seção 10](#10-rede-e-armazenamento-temporário-bucket)).
+
+### 6.6 Casos de borda
+
+| Situação | Comportamento |
+|---|---|
+| A mesma pessoa aperta de novo durante o pós-roll | **Estende** o clipe (mesmo `clip_id`, até 180 s) e envia `ClipExtend` ao amigo |
+| Os dois apertam quase juntos | Dois `clip_id`s que **compartilham** os pacotes fixados (sem duplicar RAM). A interface oferece "juntar". |
+| O pedido chega atrasado no amigo | O amigo fixa ao receber, se o buffer ainda cobre o início (tolerância de ~27 s com os padrões), e finaliza no fim ou imediatamente se o fim já passou |
+| O buffer do amigo não cobre mais o início (ou ele acabou de entrar) | **Clipe parcial** com metadados de cobertura. O editor mostra "sem imagem do amigo" na lacuna. |
+| A conexão cai antes da confirmação | Quem pediu guarda o pedido e reenvia ao reconectar. O amigo ignora duplicatas pelo `clip_id`. |
+| O jogo fecha durante o pós-roll | Finaliza antes da hora e marca `truncated_by_source_end` |
+| O app trava no pós-roll | O bucket local e o journal sobrevivem. Ao reiniciar, o app finaliza como parcial e avisa o amigo. |
+| Janela minimizada (WGC sem frames novos) | Repete o último frame ou usa o timeout. O áudio continua. |
+| Driver da GPU reinicia | Fecha o fragmento, registra a lacuna e reinicia o encoder com IDR |
+| Sincronia ainda não convergiu | Margens alargadas automaticamente e aviso de "sincronia de baixa confiança" |
+| Disco cheio | Mantém o clipe só na RAM e avisa. Nunca trava a captura. |
+| Tecla apertada sem jogo aberto | Avisa localmente. O pedido ao amigo vai marcado `requester_no_source`, para ele ainda salvar o POV dele. |
 
 ---
 
-## 7. Sincronização "exata" entre dois PCs
+## 7. Áudio: só o jogo + Discord
 
-### 7.1 O que "exato" quer dizer (importante alinhar a expectativa)
+- **API:** `ActivateAudioInterfaceAsync` com `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK` e `PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE`. É **exatamente o que OBS e Medal usam**.
+- **Versão:** a Microsoft documenta o build 20348+, mas o OBS ativa a partir do 19041. Os logs do Medal no Windows 10 19045 mostram **falhas intermitentes**. Por isso: tentar ativar, repetir em caso de falha e, como último recurso, cair para o loopback do dispositivo com aviso.
+- **Faixas:**
+  1. jogo (PID da janela capturada);
+  2. Discord (processo **raiz** de `Discord.exe`, `DiscordPTB.exe` ou `DiscordCanary.exe`, com a árvore de processos);
+  3. microfone (opcional, desligado por padrão).
 
-Existem dois tipos de sincronia:
+  O Medal 2026 já separa o áudio por processo do mesmo jeito (jogo, Discord.exe).
+- **Vozes:** o Discord não toca a sua própria voz para você. A sua voz só aparece na gravação do amigo, com o atraso do Discord. Regras para o editor:
+  - com o mic de cada um gravado, usar os mics (sincronia perfeita pelo relógio global);
+  - sem mic, usar a faixa do Discord de cada PC e **compensar o atraso**, medido por correlação cruzada quando houver mic;
+  - **nunca** tocar a mesma voz duas vezes;
+  - com 3 ou mais amigos, uma faixa do Discord fica como "mestre" e as outras ficam abaixadas.
+- **Timestamps:** `GetBuffer` devolve QPC em unidades de 100 ns, o mesmo relógio do vídeo. Ainda assim, é preciso calibrar o atraso por fonte e medir se o QPC é válido no modo *process loopback*, que a Microsoft só documenta de forma genérica.
 
-1. **Sincronia de relógio (o app garante):** os dois vídeos mostram o que cada um estava vendo **no mesmo instante real**.
-2. **Sincronia de evento do jogo (ninguém garante):** por causa do netcode, cada cliente vê o mesmo evento (um tiro, uma explosão) em momentos ligeiramente diferentes. A diferença depende do ping de cada um até o servidor e da interpolação do jogo, e costuma ficar em dezenas de ms, às vezes mais de 100 ms. Nenhum gravador consegue eliminar isso sem acesso aos dados internos do jogo.
+---
 
-Por isso, o app sincroniza pelo **relógio real** e o editor oferece **ajuste fino de ±1 frame** por POV, para quem quiser alinhar pelo evento.
+## 8. Relógio global do DuoClip
 
-### 7.2 Relógio local: QPC, nunca o relógio do Windows
+> **Pedido:** usar um relógio global sincronizado dentro do app, em vez do relógio do computador, para todos os clipes.
 
-- O **QPC** é monotônico (nunca volta) e tem resolução abaixo de 1 µs. É ele que o WGC (`SystemRelativeTime`) e o WASAPI (`GetBuffer`) usam.
-- O relógio de parede do Windows (hora do sistema) é ajustado pelo serviço de horário, pode **dar saltos** e tem precisão ruim para isso. **Não usar.**
+### 8.1 Por que não usar o relógio do Windows
 
-### 7.3 Medindo a diferença entre os relógios dos dois PCs
+- Num PC doméstico (fora de domínio), o Windows sincroniza com `time.windows.com` **mais ou menos a cada 9,1 h** (`MaxPollInterval = 2^15 s`, desde o build 1703).
+- Ele **dá saltos** quando a diferença passa de 1 s (`MaxAllowedPhaseOffset = 1 s`).
+- A própria Microsoft diz que a configuração padrão serve para "hora aproximada". Precisão de 50 ms ou 1 ms exige configuração especial e rede local, condições que o usuário doméstico não tem.
+- O *Secure Time Seeding* do Windows já foi relatado colocando datas absurdas. O usuário também pode mudar a hora na mão.
+- Um cristal de PC livre deriva **±10 ppm = ±36 ms por hora**.
 
-Os dois apps trocam pings pelo canal P2P o tempo todo (1 por segundo é suficiente), no mesmo esquema do NTP:
+**Conclusão:** o app **nunca** usa o relógio do Windows para sincronizar. Ele também **não altera** o relógio do Windows, então não precisa de admin.
 
+### 8.2 Arquitetura: QPC + NTS + P2P
+
+```mermaid
+flowchart TB
+    subgraph PC_A["PC do Você"]
+      QA["QPC (monotônico, < 1 µs)"] --> MA["AppClock A<br/>UTC = f(QPC)"]
+      NA["Cliente NTS próprio"] --> MA
+    end
+    subgraph PC_B["PC do Amigo"]
+      QB["QPC"] --> MB["AppClock B"]
+      NB["Cliente NTS próprio"] --> MB
+    end
+    S1["NTP.br (a–e.st1.ntp.br)<br/>relógios de césio do ON, com NTS"] --> NA
+    S1 --> NB
+    S2["time.cloudflare.com<br/>NTS, anycast, sem smear"] --> NA
+    S2 --> NB
+    MA <-->|"pings P2P a cada 1–2 s<br/>(canal WebRTC não confiável)"| MB
 ```
-A envia em t0 (relógio de A)  →  B recebe em t1 (relógio de B)
-B responde em t2 (relógio de B) →  A recebe em t3 (relógio de A)
 
-atraso de ida+volta  δ = (t3 − t0) − (t2 − t1)
-diferença de relógio θ = ((t1 − t0) + (t2 − t3)) / 2      // relógio_B − relógio_A
-erro máximo possível = δ / 2                              // só se toda a latência estivesse num sentido
-```
+- **Base local:** QPC. É monotônico, imune a mudanças de hora, fuso e horário de verão, conta durante o sleep e é o relógio nativo do WGC e do WASAPI.
+- **Escala global:** **UTC em nanossegundos**. O `AppClock(q) = ref_utc + (q − ref_qpc) · (1e9/QPF) · (1 + desvio)` é estimado continuamente (offset **e** frequência).
+- **Fontes:** um **cliente NTS próprio** dentro do app. O NTS (RFC 8915) autentica o servidor via TLS 1.3 e protege os pacotes, o que impede alguém de falsificar a hora.
+- **Refino P2P:** durante a sessão, os PCs trocam pings estilo NTP (4 timestamps em QPC) num canal WebRTC `ordered:false, maxRetransmits:0`. As duas estimativas são combinadas, e o app avisa se elas discordarem.
 
-Pseudocódigo do estimador (o mesmo roda nos dois lados):
+**Por que híbrido:**
+
+- Com dois PCs sincronizados ao mesmo servidor, o erro relativo é ≤ δA/2 + δB/2, onde δ é o tempo de ida e volta até o servidor.
+- Medindo direto entre os PCs, o erro é ≤ δAB/2.
+- O global ganha quando os amigos estão em cidades diferentes e perto de um servidor. O P2P ganha quando estão na mesma cidade ou operadora.
+- O híbrido também é a única opção que **continua funcionando** se uma das partes falhar: porta UDP 123 bloqueada, ou o amigo que serviria de referência sair da sessão.
+
+### 8.3 Fontes de tempo
+
+| Fonte | Usar? | Motivo |
+|---|---|---|
+| **NTP.br** (`a`–`e.st1.ntp.br`; `c.st1` e `gps.ce.ntp.br` em Fortaleza) | ✅ Principal | Estrato 1 ligado aos relógios de césio do Observatório Nacional. O NIC.br diz (2026) que **todos os servidores NTP.br operam com NTS**. |
+| **time.cloudflare.com** | ✅ Principal | NTS (TCP 4460), anycast, **sem leap smear** |
+| Google / AWS | ❌ | Fazem *leap smear*, e misturar fontes com e sem smear causa erro de até 0,5 s em segundos intercalares |
+| time.windows.com | ❌ | Sem NTS. Há medições de servidores da Microsoft até 50 ms fora por horas. |
+| pool.ntp.org | ❌ como padrão | Sem NTS, e a política do pool proíbe embutir os nomes padrão num app |
+| Roughtime | Só como checagem grosseira | Resolução de 1 s |
+
+Regras de uso: rajada de 4–8 consultas ao iniciar, depois uma consulta a cada 64 s por fonte, **nunca mais de uma a cada 15 s**. Respeitar respostas de "reduza a taxa" (KoD) e **falar com NIC.br e Cloudflare** antes de distribuir em massa.
+
+### 8.4 Estimador e incerteza
 
 ```ts
-// amostras dos últimos ~60 s
-const amostras: { quando: number; rtt: number; offset: number }[] = [];
-
-function novaAmostra(t0: number, t1: number, t2: number, t3: number) {
-  const rtt = (t3 - t0) - (t2 - t1);
-  const offset = ((t1 - t0) + (t2 - t3)) / 2;
-  amostras.push({ quando: t3, rtt, offset });
-  descartarMaisAntigasQue(60_000 /* ms */);
+// Para cada fonte (servidor NTS ou amigo P2P), guardar ~64 amostras:
+// t1, t4 = QPC local na ida e na volta; t2, t3 = horário do servidor/amigo
+function amostra(t1, t2, t3, t4) {
+  const rtt    = (t4 - t1) - (t3 - t2);          // ida e volta na rede
+  const offset = ((t2 - t1) + (t3 - t4)) / 2;    // diferença de relógio
+  return { quando: t4, rtt, offset };
 }
 
-function estimativa() {
-  // 1) "Pacotes sortudos": fique com os 25% de menor RTT,
-  //    que passaram sem fila e têm menos assimetria.
-  const boas = menoresRtt(amostras, 0.25);
-  // 2) Reta offset(t) = a + b·t por mínimos quadrados.
-  //    b é a deriva entre os cristais dos PCs (dezenas de ppm
-  //    chegam a alguns ms por minuto), por isso a medição é contínua.
-  const { a, b } = regressaoLinear(boas.map(s => [s.quando, s.offset]));
-  const incerteza = Math.min(...boas.map(s => s.rtt)) / 2; // limite superior honesto
-  return { converter: (tA: number) => tA + a + b * tA, incerteza };
+function estimar(amostras) {
+  // 1) Filtrar: RTT > 150 ms, RTT > 3× o mínimo, ou fora dos 25% de menor RTT
+  //    ("pacotes sortudos", com menos fila e menos assimetria).
+  const boas = filtrarPorRtt(amostras, { max: 150, fator: 3, quantil: 0.25 });
+  // 2) Regressão linear ponderada: offset(q) = a + b·q
+  //    (b = desvio de frequência em ppm; ±10 ppm = ±36 ms/h).
+  const { a, b, sigma } = regressaoPonderada(boas);
+  // 3) Limite honesto de erro.
+  const bound = Math.min(...boas.map(s => s.rtt)) / 2 + distanciaRaizDoServidor + 2 * sigma;
+  return { a, b, bound, sigma };
+}
+// Combinar fontes: interseção de intervalos (estilo Marzullo) + média ponderada
+// pela variância, exigindo ≥ 2 fontes NTS concordando.
+// O relógio ao vivo só é corrigido aos poucos (slew), NUNCA volta para trás.
+```
+
+- **Estados:**
+  - SINCRONIZADO: limite ≤ 8 ms;
+  - DEGRADADO;
+  - HOLDOVER: sem fontes, extrapola com a última frequência e a incerteza cresce com o tempo;
+  - SEM SINCRONIA.
+- **Persistência:** a frequência estimada é salva por máquina, como o *driftfile* do chrony, para o app convergir rápido no próximo início. Depois de sair do sleep ou trocar de rede, o app faz nova rajada.
+- **Segundos intercalares:** nenhum previsto até pelo menos junho de 2027 (IERS Bulletin C 72), e a abolição está planejada até 2035. O relógio do app fica contínuo e o deslocamento UTC−TAI vai nos metadados.
+
+### 8.5 Janela congelada × alinhamento refinado
+
+Isso concilia as duas abordagens que a pesquisa encontrou:
+
+1. **Para escolher a janela de captura:** cada PC usa o mapeamento **congelado no instante do pedido**. Uma correção posterior não "mexe" num clipe em andamento. As margens de 2 s absorvem o erro.
+2. **Para alinhar os POVs no editor:** o app recalcula o mapeamento daquele intervalo com uma **regressão de dois lados**, usando amostras de antes **e depois** do clipe. É o maior ganho de precisão possível, e o resultado é gravado nos metadados.
+
+O aperto é enviado como **timestamp global** (`hotkey_utc_ns`), não como "agora". Por isso o atraso de entrega da mensagem não importa.
+
+### 8.6 Metas de precisão
+
+| Indicador | Meta |
+|---|---|
+| Diferença entre dois PCs (fibra/cabo), P95 | **≤ 16,7 ms (1 frame a 60 fps)**, idealmente ≤ 8 ms |
+| Cor no lobby | 🟢 ≤ 8 ms · 🟡 ≤ 33 ms · 🔴 acima disso ou HOLDOVER |
+| Expectativa (estimada, sem medição publicada no Brasil) | 1–5 ms em fibra cabeada, alguns ms a mais em Wi-Fi, 5–50 ms em 4G |
+
+### 8.7 Metadados de cada clipe (JSON ao lado do vídeo e no MP4 `prft`)
+
+```json
+{
+  "clip_id": "uuid", "session_id": "uuid", "participant_id": "uuid",
+  "timescale": "utc_posix_ns", "clock_epoch_id": 3,
+  "hotkey_utc_ns": 1791460800123456789,
+  "start_utc_ns": 1791460768123456789, "end_utc_ns": 1791460812123456789,
+  "uncertainty_bound_ns": 3200000, "sync_state": "SYNCED",
+  "qpc_frequency": 10000000, "start_qpc": 123456789012,
+  "mapping": { "ref_qpc": 123456000000, "ref_utc_ns": 1791460700000000000, "rate_ppb": -4120, "method": "two_sided" },
+  "sources": [{ "host": "a.st1.ntp.br", "nts": true, "min_rtt_us": 7400 }, { "host": "time.cloudflare.com", "nts": true, "min_rtt_us": 9100 }],
+  "peer_offsets": [{ "peer_id": "uuid", "offset_ns": 1200000, "bound_ns": 2500000, "path": "direct" }],
+  "av_offset_ms": { "video": -21, "game_audio": 0, "discord": 0 },
+  "coverage": [{ "from_utc_ns": 1791460768123456789, "to_utc_ns": 1791460812123456789 }],
+  "utc_tai_offset_s": 37
 }
 ```
 
-Detalhes de implementação:
+### 8.8 Limite físico: o netcode do jogo
 
-- Mande os pings num **DataChannel não confiável e não ordenado**. Assim, uma retransmissão ou um arquivo grande na fila não distorce o RTT.
-- Mostre na interface: **"Sincronia: ±X ms"**. Se ficar pior que meio frame, mostre um aviso.
+Mesmo com relógios perfeitos, cada jogador **vê o mesmo evento em momentos diferentes**, porque o jogo interpola (no Source, cerca de 100 ms no passado por padrão, variando por cliente e jogo). Por isso o editor mostra a incerteza e oferece **ajuste fino** (±1 frame, ±1 ms) e alinhamento por áudio opcional.
 
-### 7.4 Precisão esperada
+### 8.9 Implementação (Rust)
 
-- O erro dominante é a **assimetria de rota** (ida e volta por caminhos diferentes). Nenhuma troca de pacotes consegue detectá-la, e o NIST aponta isso como a principal fonte de erro do NTP em redes amplas. Para o NTP em boas condições, o NIST cita incerteza típica em torno de **1 ms**.
-- **Pior caso teórico:** erro = RTT/2. Dois jogadores na mesma região com RTT de 10–40 ms entre si dão ±5–20 ms no pior caso. Filtrando pelos pacotes de menor RTT, o esperado é **bem menos**.
-- **Referência:** a 60 fps, 1 frame = **16,7 ms**. Na maior parte dos casos, a sincronia deve ficar abaixo de 1 frame. **Isso precisa ser validado** com o teste da seção 7.6.
+| Crate | Licença | Uso |
+|---|---|---|
+| `ntp-proto` 1.9.0 (do ntpd-rs) | Apache-2.0 OR MIT | NTS-KE, pacotes, filtro de Kalman. A API é instável: fixar em `=1.9.0`. |
+| `rkik-nts` 1.4.0 | MIT | Cliente NTS de alto nível, mas lê `SystemTime::now()` (relógio do Windows). Precisa de um **fork** para usar QPC. |
+| `sntpc` 0.11 | MIT OR Apache-2.0 | SNTP sem NTS, com gerador de timestamp customizável (QPC). Serve de fallback. |
 
-### 7.5 Do relógio ao vídeo
+O estimador e a disciplina do relógio (algumas centenas de linhas) são escritos em casa. Mais tarde, opcionalmente, uma VM em São Paulo com chrony ou ntpd-rs como servidor NTS próprio, para fallback e telemetria. **Não** dá para fazer isso em Cloudflare Workers, que não têm UDP.
 
-- Cada frame e pacote de áudio recebe `pts_sessão = QPC_local convertido para o relógio de referência da sessão` (por exemplo, o relógio de quem criou a sessão).
-- Cada clipe salvo leva metadados: `inicio_sessao_ns`, `offset_aplicado`, `incerteza_ms`, `fps` e `id_do_clipe`. Isso vai num JSON ao lado do arquivo e/ou em metadados do MP4.
-- O editor alinha os vídeos **só pelos metadados**, sem adivinhação.
+### 8.10 Validação
 
-### 7.6 Teste de validação da sincronia ("teste do flash")
-
-1. Um utilitário de teste mostra em tela cheia, nos dois PCs, um quadrado que **pisca exatamente nas viradas de segundo do relógio da sessão**, com um bipe, além do tempo em ms.
-2. Os dois gravam com o app e um deles aperta o clipe.
-3. No editor, compare o frame em que o quadrado acende em cada POV. A diferença é o **erro real de ponta a ponta** (relógio + latência de captura).
-4. Repita em LAN, depois pela internet, em redes diferentes (fibra, 4G, CGNAT).
-
-Opcional: deixe os dois monitores lado a lado e filme com um celular a 240 fps.
-
-### 7.7 Ajuste fino opcional
-
-- **Manual:** botões de ±1 frame por POV no editor.
-- **Automático (beta):** correlação cruzada do áudio do jogo quando os dois ouvem o mesmo som (por exemplo, a mesma explosão). Não é confiável em todos os jogos, por isso fica como sugestão.
+- **Teste do flash:** os dois PCs mostram um quadrado que pisca nas viradas de segundo do relógio global, com bipe. Os dois gravam, e o editor mede a diferença real de ponta a ponta.
+- **Telemetria anônima opcional:** RTT mínimo, limite de erro, tipo de conexão e discordância global × P2P, para obter números reais do Brasil, que não existem publicados.
 
 ---
 
-## 8. Fluxo completo de um clipe
+## 9. Fluxo completo de um clipe
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as App de Você (A)
     participant B as App do Amigo (B)
-    Note over A,B: Sessão jogando juntos ativa, canal P2P aberto e relógios sincronizados
-    A->>A: Tecla de clipe em T (relógio da sessão), som e aviso de "clipando..."
-    A->>B: ClipRequest {id, T, antes=30s, depois=10s} (assinado)
-    B-->>A: ACK
-    B->>B: Mostra "Você clipou" (amigo é avisado)
-    Note over A,B: Os dois esperam até T + 10 s
-    A->>A: Salva [T−30s, T+10s] do buffer em MP4 local (stream copy)
-    B->>B: Salva [T−30s, T+10s] do buffer em MP4 local (stream copy)
-    B->>A: Prévia leve 720p (~15 MB), enviada com limite de banda
-    A->>A: Abre o editor: seu vídeo em qualidade total + prévia do amigo, já sincronizados
-    A->>A: Escolhe início e fim (padrão T−10s → T+5s), layout e mixagem
-    A->>B: RangeRequest {id, início, fim}
-    B->>A: Só esse trecho em qualidade total (corte por keyframe, sem recodificar)
-    A->>A: Exporta o vídeo final (FFmpeg + encoder de hardware)
+    participant W as Worker (credenciais)
+    participant R as Bucket R2
+    Note over A,B: Sessão ativa com consentimento dos dois, relógio global sincronizado
+    A->>A: Tecla em T (UTC global), fixa o buffer
+    A->>B: ClipRequest {clip_id, T, antes 30s, depois 10s, margem 2s}
+    B-->>A: ACK 1 (fixado + cobertura esperada)
+    B->>B: Aviso "Você clipou" (B pode vetar)
+    Note over A,B: Os dois coletam até T + 10s + 2s e fecham os fragmentos
+    B->>W: pede URLs de upload (clip_id)
+    W-->>B: URLs PUT assinadas (≤ 15 min, prefixo do clipe)
+    B->>R: Prévia 720p criptografada (~16 MB), em blocos
+    B-->>A: ACK 2 (pronto + manifesto + chave do clipe via canal autenticado)
+    A->>W: pede URLs de download
+    A->>R: baixa a prévia (ou recebe direto por P2P, o que chegar primeiro)
+    A->>A: Editor com os POVs alinhados pelo relógio global
+    A->>B: RangeRequest {clip_id, início, fim}
+    B->>R: só o trecho escolhido em qualidade total (fragmentos por GOP)
+    A->>R: baixa, decifra e exporta
+    A->>W: exportado, apagar o clipe agora
 ```
 
-**Casos de borda:**
+---
 
-- **Amigo offline ou fora da sessão:** salva só o clipe local e avisa "o clipe do amigo não estava disponível".
-- **Amigo entrou há pouco** (buffer menor que 30 s): salva o que tiver e o editor mostra a parte faltante em preto.
-- **Os dois apertam quase juntos:** ao receber um `ClipRequest`, se já existe um clipe com janela sobreposta, os dois são unidos num só.
-- **Rede lenta:** a prévia chega primeiro e a qualidade total vem depois (ou "quando a partida acabar").
-- **Simétrico:** o amigo também pode abrir o mesmo clipe no editor dele e pedir o seu trecho.
-- **Mais de 2 amigos:** o mesmo protocolo funciona para um grupo de 3 a 5 (quem clipa manda o pedido para todos).
+## 10. Rede e armazenamento temporário (bucket)
+
+> **Interpretação adotada:** "bucket" = **armazenamento de objetos na nuvem** (como S3/R2) para trocar os clipes temporários.
+> Os "buckets" **locais** em disco (seção 6.5) complementam a solução. Se a ideia era só a parte local, a seção 6.5 já cobre.
+
+### 10.1 Pareamento e conexão
+
+- **Identidade:** chaves Ed25519 por instalação, guardadas com DPAPI. Pareamento por código de convite e, opcionalmente, um código curto de verificação.
+- **WebRTC DataChannel** com três canais:
+  - `controle`: confiável e ordenado;
+  - `relógio`: não confiável e não ordenado;
+  - `dados`: acelerador P2P.
+- **Signaling** pequeno (o mesmo Worker).
+- Com o bucket, **o TURN deixa de ser necessário para transferir arquivos**. Só seria preciso para o canal de controle e relógio em NATs muito restritivos, e nesse caso o controle pode passar pelo próprio Worker (WebSocket).
+
+### 10.2 Recomendação: bucket primeiro, P2P como acelerador
+
+| | Bucket primeiro (recomendado) | P2P primeiro |
+|---|---|---|
+| Amigo fechou o app ou ficou offline | ✅ O clipe já está no bucket | ❌ Perde |
+| CGNAT ou NAT simétrico (comum no Brasil) | ✅ Sem TURN | ⚠️ Precisa de TURN (10–25% das conexões) |
+| Quem envia termina rápido | ✅ | ❌ Depende de quem recebe estar online |
+| Privacidade | ✅ Com criptografia ponta a ponta, o provedor só vê bytes cifrados | ✅ |
+| Custo | ≈ US$ 2–4/mês por 1.000 usuários no R2 | Zero (fora o TURN) |
+
+Quando os dois estão online e com caminho direto, a prévia também vai por P2P. Quem recebe pega cada bloco **de quem entregar primeiro**.
+
+### 10.3 Comparação de provedores (preços oficiais conferidos em out/2026)
+
+| Provedor | Armazenamento | Download (egress) | Expiração nativa | Região no Brasil |
+|---|---|---|---|---|
+| **Cloudflare R2** | US$ 0,015/GB-mês (10 GB grátis) | **Grátis** | Regras por dia (remoção em até ~24 h após vencer) | ❌ (só wnam/enam/weur/eeur/apac/oc). O "Local Uploads" (beta, sem custo) grava perto do cliente, mas não está confirmado se há ponto na América do Sul. |
+| **AWS S3 sa-east-1** | US$ 0,0405/GB-mês | US$ 0,15/GB | Por dia (arredonda para a meia-noite UTC) | ✅ São Paulo |
+| **Google Cloud Storage southamerica-east1** | US$ 0,035/GiB-mês | US$ 0,12/GiB | Por dia. **Atenção:** o *soft delete* de 7 dias vem ligado e é cobrado; desligar. | ✅ São Paulo |
+| **Supabase Pro** | US$ 25/mês com 100 GB, depois US$ 0,0213/GB | 250 GB incluídos, depois US$ 0,09/GB | ❌ **Não há expiração de objeto atual**; precisa de pg_cron ou Edge Function chamando `remove()` | ✅ sa-east-1 |
+| Backblaze B2 | ~US$ 6,95/TB-mês (não reconferido) | Grátis até 3× o armazenado (não reconferido) | ≥ 2 dias | ❌ |
+| Wasabi | Cobrança mínima de 90 dias por objeto (relatado, não reconferido) | — | — | ❌ Não serve para arquivos de horas |
+
+**Estimativa de custo** para 1.000 usuários × 20 clipes/mês, retenção de 72 h:
+
+- **Por POV enviado:** prévia de 44 s × 3 Mbps ≈ 16,5 MB, mais o trecho final de ~16 s × 30 Mbps ≈ 60 MB, ou seja, **≈ 75 MB**.
+- **Volume:** 20.000 × 75 MB = **1,5 TB enviados e 1,5 TB baixados por mês**. Média armazenada: 1.500 GB ÷ 30 × 3 ≈ **150 GB-mês**.
+
+| Provedor | Cálculo | ≈ Total/mês |
+|---|---|---|
+| **R2** | (150 − 10) × 0,015 = US$ 2,10. ~220 mil PUT/GET cabem no plano grátis. Download grátis. | **US$ 2–4** |
+| S3 São Paulo | 150 × 0,0405 + (1.500 − 100) × 0,15 + operações | ~US$ 218 |
+| GCS São Paulo | 140 GiB × 0,035 + 1.397 GiB × 0,12 + operações | ~US$ 174 |
+| Supabase Pro | 25 + (150 − 100) × 0,0213 + (1.500 − 250) × 0,09 | ~US$ 139 |
+
+O custo é dominado pelo **download**, e o R2 não cobra download. Se **residência dos dados no Brasil** virar exigência (jurídica ou comercial), a opção é S3 sa-east-1 ou Supabase sa-east-1, pagando ~50–100× mais.
+
+### 10.4 Expiração automática
+
+Nenhum provedor apaga **por hora** de forma nativa. Por isso:
+
+1. **Exclusão explícita** quando o clipe é exportado ou descartado (`DeleteObject` é **grátis** no R2).
+2. **Varredura de hora em hora** (Cron Trigger do Worker) com base num registro `{clip_id, expires_at}`. Isso garante as 24–72 h com precisão de hora.
+3. **Regra de ciclo de vida** no prefixo `clips/` com expiração de 3 dias, mais `AbortIncompleteMultipartUpload` de 1 dia, como **rede de segurança**.
+
+### 10.5 Upload e download sem expor chaves
+
+- **Nunca** embutir chaves do bucket no app.
+- Um **Cloudflare Worker** autentica o usuário, confere se ele é **par do clipe** e devolve uma de duas coisas:
+  - **URLs pré-assinadas** PUT/GET de no máximo 15 min (o R2 aceita de 1 s a 7 dias para GET/HEAD/PUT/DELETE; não aceita POST de formulário), com o `Content-Type` assinado;
+  - ou **credenciais temporárias** do R2 restritas ao prefixo do clipe. Elas são assinadas com a chave mestra **no servidor**, nunca no cliente.
+- **Cotas por usuário:** bytes por dia, clipes ativos e tamanho máximo de bloco e de clipe (ex.: 120 s × 60 Mbps). Só o amigo pareado recebe URL de leitura.
+
+### 10.6 Criptografia ponta a ponta
+
+- Cada clipe tem uma **chave aleatória de 256 bits**. Cada bloco é cifrado com **AES-256-GCM**, com *nonce* único (prefixo aleatório + contador) e AAD = `clip_id|pov|qualidade|índice|é_último`. A AAD impede trocar, reordenar ou truncar blocos.
+  - Alternativa pronta: libsodium `secretstream`.
+- A chave vai **só para o amigo pareado**, pelo canal autenticado. A Cloudflare só armazena bytes cifrados, o que também reduz muito o risco perante a LGPD.
+
+### 10.7 Uma única unidade de transferência (P2P e bucket)
+
+Os fragmentos fMP4 alinhados por GOP (seção 6.5) são agrupados em **blocos cifrados de ~4–8 MiB**, cada um um **objeto separado**:
+
+```
+clips/{pair_id}/{clip_id}/{pov}/{proxy|full}/{índice}.bin
+clips/{pair_id}/{clip_id}/{pov}/manifest.bin   ← cifrado: bloco → faixa de tempo global, hashes
+```
+
+- Usar objetos separados, e não multipart, permite **baixar o bloco N enquanto o N+1 ainda sobe** (um objeto multipart só pode ser lido depois de completo, e o R2 exige partes de tamanho igual).
+- O mesmo bloco pode vir pelo P2P ou pelo bucket. O pedido é idempotente por `(clip_id, índice)` e retomável.
+
+### 10.8 Não atrapalhar o ping
+
+- Limitar o upload a 30–50% da banda medida enquanto o jogo roda.
+- **Prévia primeiro:** ~16,5 MB levam ≈ 6,6 s a 20 Mbps de upload.
+- **Qualidade total só do trecho escolhido:** ~60 MB levam ≈ 24 s a 20 Mbps e ≈ 4,8 s a 100 Mbps.
+- Opção "enviar a qualidade total quando a partida acabar". O Medal, por padrão, só sobe depois que o jogo fecha.
 
 ---
 
-## 9. Rede: pareamento, conexão P2P e transferência
+## 11. Editor / pré-visualização
 
-### 9.1 Pareamento e identidade
-
-- Cada instalação gera um **par de chaves Ed25519** guardado com DPAPI (proteção de dados do Windows, por usuário).
-- Para adicionar um amigo, usa-se um **código ou link de convite** de uso único. Opcionalmente, os dois comparam um **código curto de verificação** (como no Signal) para garantir que não há intermediário.
-- Só amigos pareados podem mandar `ClipRequest`, e só com uma **sessão ativa**: os dois clicaram em "jogar juntos".
-
-### 9.2 Conexão
-
-- **WebRTC DataChannel** (criptografado com DTLS por padrão), com três canais:
-  - `controle`: confiável e ordenado (pedidos de clipe, ACKs, estado);
-  - `relógio`: **não confiável e não ordenado** (pings de sincronia);
-  - `arquivos`: confiável, em blocos com hash SHA-256 e retomável.
-- O **fingerprint DTLS** de cada lado é assinado com a chave Ed25519 do pareamento. Assim, nem um servidor de signaling comprometido consegue se passar pelo amigo.
-- **Bibliotecas:**
-  - **webrtc-rs** (Rust, async, com TURN);
-  - **libdatachannel** (C++17, licença MPL 2.0, com bindings para Rust e Node);
-  - o *str0m* é mais focado em servidor (SFU) e menos testado em P2P.
-- **Signaling:** um servidor pequeno de WebSocket que só troca as ofertas de conexão. Pode ser Cloudflare Workers/Durable Objects, Supabase Realtime ou um serviço próprio em Rust ou Node. Ele não vê nenhum vídeo.
-- **NAT e CGNAT:** STUN resolve a maioria dos casos, mas **~10–25% das conexões precisam de TURN** (relay). O CGNAT é comum em operadoras brasileiras, então um TURN (coturn numa VPS, ou um serviço pago) é **obrigatório** para o produto funcionar sempre. O TURN só repassa bytes criptografados. Onde houver IPv6, a conexão direta fica mais fácil.
-- Registre qual tipo de candidato ICE foi usado (`host`, `srflx` ou `relay`) para medir o custo real de TURN.
-
-### 9.3 Transferência sem atrapalhar o jogo
-
-Enviar dezenas de MB enquanto o amigo ainda está jogando pode **aumentar o ping e a perda de pacotes do jogo**. Para evitar:
-
-- **Limitador de banda** no envio, por exemplo no máximo 30–50% do upload medido, ajustável;
-- opção **"enviar só quando a partida acabar"** (ou quando o jogo for minimizado);
-- **prévia primeiro:** 40 s × 3 Mbps ≈ **15 MB**;
-- **qualidade total só do trecho escolhido:** 15 s × 30 Mbps ≈ **56 MB**, em vez dos 40 s inteiros (≈ 150 MB).
+- **Reprodução sincronizada** pelos timestamps globais. Um vídeo é o mestre, e os outros são corrigidos a cada frame (`requestVideoFrameCallback`). Para *scrubbing* com precisão de frame, usar WebCodecs desenhando num único canvas.
+- **Linha do tempo:** marcador do aperto, faixa de incerteza da sincronia, regiões "sem imagem do amigo", formas de onda e alças de início e fim. A margem oculta de ±2 s fica disponível como folga.
+- **Layouts:** lado a lado, empilhado 9:16 (TikTok, Shorts, Reels), PiP, cortes alternados, sequencial, ou **arquivos separados já sincronizados** (sem recodificar).
+- **Mixer** com as regras de voz da seção 7. **Ajuste fino** de ±1 frame e ±1 ms por POV.
+- **Exportação:** composição na GPU com encoder de hardware (FFmpeg `filter_complex` com `hstack`, `vstack` e `overlay`). Quando o corte não cai em keyframe, recodificar só o primeiro e o último GOP, ou usar edit list.
 
 ---
 
-## 10. Editor / pré-visualização
-
-- **Dois players sincronizados:** use um vídeo como "mestre" e corrija o outro a cada frame com `requestVideoFrameCallback` (`mediaTime`), ajustando `playbackRate` ou fazendo *seek* quando o desvio passar de meio frame. A API é "best effort" e pode atrasar 1 vsync. Para precisão de frame no *scrubbing*, decodifique com **WebCodecs** e desenhe os dois num único `<canvas>`.
-- **Linha do tempo:** marcador do aperto do botão, forma de onda das faixas e alças de início e fim (padrão T−10 s → T+5 s, dentro da janela salva T−30 s → T+10 s).
-- **Layouts de exportação:**
-  - **lado a lado** (16:9 lado a lado, ou letterbox);
-  - **empilhado vertical 9:16** (TikTok, Shorts, Reels);
-  - **picture-in-picture**;
-  - **cortes alternados** entre POVs;
-  - **sequencial** (POV A e depois o replay no POV B).
-- **Mixer:** volume por faixa (jogo A, jogo B, Discord, mics), com regras para evitar voz duplicada (seção 6.3).
-- **Ajuste fino:** ±1 frame por POV.
-- **Exportação:** FFmpeg com `filter_complex` (`hstack`, `vstack`, `overlay`, `amix`) e encoder de hardware, com presets por destino (tamanho e resolução).
-
----
-
-## 11. Segurança e privacidade
+## 12. Segurança, privacidade e consentimento
 
 | Área | Medida |
 |---|---|
-| **Anti-cheat** | Nenhuma injeção de DLL, nenhum driver de kernel, nenhuma leitura de memória do jogo. WGC e process loopback são APIs públicas do Windows que rodam fora do processo do jogo, o que é bem menos invasivo que hooks. Mesmo assim, **teste nos jogos-alvo** (Valorant/Vanguard, EAC, BattlEye), porque nenhum fornecedor de anti-cheat publica uma lista de "permitidos". |
-| **Atalho global** | `RegisterHotKey`, em vez de hooks globais de teclado (`WH_KEYBOARD_LL`), que parecem keylogger para antivírus e anti-cheat. Botões laterais do mouse via Raw Input. Teste com jogos que rodam como administrador. |
-| **Permissões** | Roda como usuário comum. Instalação por usuário, sem administrador. |
-| **Escopo da captura** | Só a janela do jogo selecionado e só o áudio do jogo e do Discord. Captura de monitor apenas como opção explícita, com aviso. |
-| **Transparência** | Ícone na bandeja mostrando "gravando". Aviso na tela quando *você* ou *um amigo* clipa. Respeitar janelas protegidas (`WDA_EXCLUDEFROMCAPTURE`). |
-| **Controle do amigo** | Opção "permitir que amigos clipem minha tela" (por amigo), limite de pedidos por minuto e possibilidade de recusar ou apagar. |
-| **Dados** | O buffer fica **só na RAM** e é descartado. Clipes ficam **só no PC** (pasta Vídeos). Nada vai para a nuvem por padrão. |
-| **Rede** | Criptografia ponta a ponta (DTLS). Chaves pareadas e fixadas. Signaling e TURN não veem conteúdo. Mensagens com schema rígido, limites de tamanho e *fuzzing* do parser. |
-| **Código** | Rust no núcleo (segurança de memória em código exposto à rede). Dependências atualizadas, especialmente o FFmpeg, que tem CVEs periódicos. |
-| **Atualizações** | Binários e atualizações **assinados**. A Store faz isso, e o updater do Tauri verifica assinaturas. |
-| **Legal (LGPD)** | Gravar a voz de outras pessoas exige consentimento. O pareamento e a sessão "jogar juntos" contam como consentimento entre os dois. Para **terceiros na call** que não usam o app, mostre um lembrete para avisá-los. |
+| **Anti-cheat** | Nenhuma injeção de DLL, driver ou leitura de memória do jogo. Mapear **todas** as chamadas que tocam o processo ou a janela do jogo (meta: nenhum handle além de `PROCESS_QUERY_LIMITED_INFORMATION`). Testar com uma build assinada em Vanguard, EAC, BattlEye, FACEIT e **Gamers Club AC**, e abrir contato com FACEIT e Gamers Club. |
+| **Atalho** | `RegisterHotKey`, com o QPC registrado no `WM_HOTKEY`, mais Raw Input e XInput para controle. **Evitar hooks globais de teclado** (`WH_KEYBOARD_LL`), que parecem keylogger. Segundo análise de terceiros, o Medal usa `SetWindowsHookEx` para atalhos. |
+| **Consentimento para captura remota** | Ninguém dispara a gravação do PC de outra pessoa sem consentimento: (1) **opt-in por sessão** ("compartilhar meu POV com esta party"); (2) **aviso visível** a cada clipe disparado por outro; (3) **janela para vetar** (~15 s) antes do envio, ou "aprovar sempre" para cada amigo; (4) **nunca enviar automaticamente** imagens da captura de monitor; (5) só amigos pareados mutuamente e numa sessão autenticada; (6) registro nos dois PCs. |
+| **Escopo** | Só a janela do jogo e só o áudio do jogo e do Discord. Respeitar janelas protegidas. |
+| **Dados** | Buffer só na RAM. Buckets locais criptografados e apagados. Bucket na nuvem cifrado de ponta a ponta, com expiração ≤ 72 h e botão "apagar meus clipes agora". |
+| **Rede** | DTLS no WebRTC, chaves fixadas, URLs assinadas curtas, cotas, schema rígido de mensagens e *fuzzing*. |
+| **Código** | Rust no núcleo. FFmpeg LGPL atualizado. **Não copiar código do OBS** (GPL): reimplementar os padrões. |
+| **LGPD** | O R2 fica fora do Brasil, o que é **transferência internacional** (Art. 33). É preciso política de privacidade e base legal, e confirmar as cláusulas-padrão da ANPD com um advogado. Também é preciso consentimento para gravar vozes. |
+| **ECA Digital** (Lei 15.211/2025, em vigor desde 17/03/2026) | Vale para produtos digitais de **acesso provável por menores**, e gamers incluem muitos adolescentes. Exige configurações padrão no nível mais protetivo, possível verificação de idade e ferramentas parentais. **Revisar com um advogado** antes de lançar. Considerar um "modo menor" (sem nuvem) ou idade mínima. |
 
 ---
 
-## 12. Stack tecnológica: opções e recomendação
+## 13. Stack tecnológica
 
-| Opção | Prós | Contras | Veredito |
-|---|---|---|---|
-| **A. Núcleo Rust + UI Tauri 2** | Desempenho nativo. Segurança de memória. Crates `windows` (windows-rs) para WGC, D3D11 e WASAPI; `windows-capture` como ponto de partida para WGC; FFmpeg via `ffmpeg-next`/`rsmpeg`; `webrtc-rs`. App leve (WebView2), e o editor pode ser feito com tecnologia web. | Mais trabalho próprio no pipeline de captura e codificação | ✅ **Recomendada** |
-| **B. C++ + libobs** (motor do OBS) | Captura, encoders, replay buffer e áudio por aplicativo já prontos e testados em produção | **Licença GPL-2**: se o app for distribuído, o código precisa ser aberto. Biblioteca grande. Menos controle fino dos timestamps. | Boa opção **se o projeto for open source** |
-| **C. C#/.NET (WinUI 3/WPF)** | Alta produtividade em UI no Windows | Encoders via Media Foundation variam por driver (NVIDIA). Seria preciso interop com FFmpeg ou SDKs nativos. | Viável, mas sem vantagem clara sobre A |
-| **D. Electron + `getDisplayMedia`** | Muito rápido de prototipar | Feito para chamadas de vídeo, não para gravação de alta qualidade. Sem áudio por processo. App pesado. | ❌ Não recomendada |
-
-**Licenças:** o FFmpeg pode ser compilado em **LGPL** com NVENC, AMF e QSV (sem x264, que é GPL). Isso permite um app de código fechado, desde que as regras da LGPL sejam seguidas (link dinâmico e aviso de licença). Confirme com um advogado antes de lançar comercialmente.
-
-**Estrutura de pastas sugerida (quando começar o código):**
+| Camada | Escolha | Observação |
+|---|---|---|
+| Núcleo (captura, encoder, buffer, relógio) | **Rust** + `windows-rs` + FFmpeg (`ffmpeg-next`/`rsmpeg`, build LGPL) | `windows-capture` como ponto de partida para o WGC |
+| Relógio global | `ntp-proto` / fork do `rkik-nts` + estimador próprio | Seção 8.9 |
+| Interface e editor | **Tauri 2** (WebView2) + TypeScript (React ou Svelte) | WebCodecs para o editor |
+| Rede P2P | `webrtc-rs` ou `libdatachannel` (MPL 2.0) | — |
+| Backend mínimo | **Cloudflare Worker** (auth, URLs assinadas, signaling, varredura cron) + **R2** + D1/KV (registro de clipes) | Sem conteúdo em claro no servidor |
+| Alternativa rápida para um MVP open source | libobs (GPL-2) | Exige abrir o código |
 
 ```
 duoclip/
-├─ core/            # Rust: captura WGC, áudio WASAPI, encoder, replay buffer, relógio
-├─ net/             # Rust: pareamento, WebRTC, protocolo de clipes, transferência
-├─ app/             # Tauri 2: bandeja, configurações, editor (TS + React/Svelte)
-├─ signaling/       # servidor mínimo de WebSocket
+├─ core/            # Rust: WGC, WASAPI, encoder, ring buffer, pós-roll, buckets locais
+├─ clock/           # Rust: AppClock (QPC + NTS + P2P), estimador, metadados
+├─ net/             # Rust: pareamento, WebRTC, protocolo de clipes, upload/download cifrado
+├─ app/             # Tauri 2: bandeja, configurações, consentimento, editor
+├─ worker/          # Cloudflare Worker: auth, presign, signaling, cron de expiração
 └─ tools/sync-test/ # utilitário do "teste do flash"
 ```
 
 ---
 
-## 13. Distribuição, assinatura e requisitos mínimos
+## 14. Distribuição e requisitos mínimos
 
-### 13.1 Distribuição
-
-- **Microsoft Store (recomendado):**
-  - desde **10/09/2025**, o cadastro de **desenvolvedor pessoa física é gratuito** (cerca de 200 mercados, verificação com documento e selfie);
-  - aceita apps Win32 empacotados em MSIX, que a **Microsoft assina** e atualiza automaticamente;
-  - o pacote MSIX também dá a **identidade de pacote** necessária para a capability `graphicsCaptureWithoutBorder` (seção 4.3).
-- **Fora da Store:**
-  - é preciso um certificado de assinatura de código OV ou EV. A reputação no SmartScreen se constrói com o tempo de downloads.
-  - O **Azure Artifact Signing** (antigo Trusted Signing) custa ~US$ 10/mês, mas em 2026 aceita **pessoa física só dos EUA e do Canadá**, e organizações dos EUA, Canadá, UE e Reino Unido. **Não serve para o Brasil** por enquanto.
-
-### 13.2 Requisitos mínimos sugeridos
+- **Microsoft Store:** cadastro gratuito para pessoa física desde set/2025, com a Microsoft assinando o MSIX. O pacote pode ser necessário para remover a borda amarela (seção 4.8).
+- **Fora da Store:** certificado OV/EV. O Azure Artifact Signing aceita pessoas físicas só dos EUA e do Canadá.
 
 | Item | Mínimo | Recomendado |
 |---|---|---|
-| Windows | Windows 10 2004 (build 19041), com borda amarela obrigatória e áudio por processo "não oficial" | **Windows 11** (sem borda, áudio por processo oficial, `MinUpdateInterval` no 24H2+). O Windows 10 está fora do suporte da Microsoft desde 14/10/2025. |
-| GPU | Qualquer NVIDIA, AMD ou Intel com encoder de hardware H.264 | GPU dos últimos anos (HEVC/AV1 opcionais) |
-| RAM livre | ~0,5 GB para o buffer | 1 GB+ |
-| Internet | Upload de 5 Mbps | 10 Mbps+ de upload |
+| Windows | **Windows 10 22H2** (borda amarela sempre visível com WGC; áudio por processo com retentativa). Ainda é ~25–27% do Brasil (StatCounter, 2026), e as atualizações ESU para consumidores foram **estendidas até 12/10/2027**. | **Windows 11** (sem borda; `MinUpdateInterval` no 24H2+) |
+| GPU | Qualquer uma com encoder H.264 de hardware | GPU dos últimos anos. RX 6500 XT/6400 e GT 1030 **não têm encoder** e caem no modo degradado. |
+| RAM livre | ~0,6 GB (buffer + clipes ativos) | 1 GB+ |
+| Internet | 5 Mbps de upload | 20 Mbps+ de upload |
 | Jogo | Janela ou tela cheia sem bordas | — |
 
 ---
 
-## 14. Roadmap sugerido
+## 15. Roadmap
 
 | Fase | Entrega | Critério de pronto |
 |---|---|---|
-| **0 — Provas de conceito** | (a) WGC em janela → NVENC/AMF/QSV → arquivo MP4; (b) process loopback do jogo e do Discord em faixas separadas | PresentMon mostra perda de FPS < 5%. O áudio do Discord é capturado pelo processo raiz. |
-| **1 — Clipador local** | App na bandeja, buffer em RAM, tecla de clipe, salvar MP4 com as 2–3 faixas | Clipe salvo em < 1 s após a janela "depois" |
-| **2 — Dupla conectada** | Pareamento, signaling, WebRTC, sincronização de relógio com indicador "±X ms" | O teste do flash mostra erro < 1 frame em LAN e pela internet |
-| **3 — Clipe remoto + prévia** | `ClipRequest`, salvamento nos dois lados, envio da prévia e editor com 2 POVs e corte | Do aperto até a prévia aberta: < 15 s com upload de 10 Mbps |
-| **4 — Qualidade total + exportação** | `RangeRequest`, layouts (lado a lado, 9:16, PiP), mixer e exportação por hardware | Exportação de 15 s em < 10 s numa GPU média |
-| **5 — Produto** | MSIX e Store, updater, borda removível, grupos de 3–5, configurações de privacidade | Publicado na Store |
+| **0 — Provas de conceito** | (a) WGC → NVENC/AMF/QSV, com **benchmark PresentMon** contra a captura do monitor; (b) process loopback do jogo e do Discord; (c) **teste da borda** (sem pacote, configuração do Win11, MSIX); (d) protótipo do AppClock com NTS | FPS < 5% de perda. Borda resolvida no Win11. AppClock ≤ 8 ms contra o NTP.br. |
+| **1 — Clipador local** | Bandeja, ring buffer, **pós-roll "fixar e coletar"**, buckets locais fMP4, faixas separadas | Clipe pronto ≤ 1 s após o fim do pós-roll. Sobrevive a um crash. |
+| **2 — Relógio global + dupla** | NTS + P2P híbrido, estados, indicador "±X ms", pareamento, consentimento | Teste do flash ≤ 1 frame (P95) em fibra |
+| **3 — Clipe remoto + bucket** | `ClipRequest`, Worker, R2, criptografia de ponta a ponta, prévia, expiração | Do aperto até a prévia aberta < 20 s com 20 Mbps de upload |
+| **4 — Editor e exportação** | Layouts, mixer, ajuste fino, exportação por hardware | Exportação de 15 s < 10 s numa GPU média |
+| **5 — Produto** | MSIX/Store, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), revisão LGPD e ECA Digital, grupos de 3–5 | Publicado |
 
 ---
 
-## 15. Riscos e como mitigar
+## 16. Riscos e mitigação
 
 | Risco | Prob. | Impacto | Mitigação |
 |---|---|---|---|
-| Algum anti-cheat bloquear a captura | Baixa | Alto | WGC sem injeção. Testar os jogos populares desde a Fase 0. Ter fallback para captura de monitor. |
-| Jogo em fullscreen exclusivo | Média | Médio | Detectar e orientar para "tela cheia sem bordas". Captura de monitor como opção. |
-| CGNAT / NAT simétrico | Alta | Alto | Servidor TURN desde o início |
-| Transferência piorar o ping | Média | Alto | Limitador de banda, prévia leve, "enviar ao fim da partida" |
-| Assimetria de rota piorar a sincronia | Média | Médio | Filtro de pacotes de menor RTT, indicador de incerteza, ajuste fino no editor |
-| Mudança na arquitetura de processos do Discord | Média | Médio | Capturar a árvore a partir do processo raiz. Testes automatizados a cada versão. |
-| Process loopback indisponível em Win10 antigo | Baixa | Médio | Detectar em tempo de execução e avisar. Exigir Win10 2004+. |
-| WGC parar de mandar frames com tela parada (24H2) | Alta | Baixo | Repetir o último frame (CFR) no encoder |
-| Limite de sessões simultâneas do encoder | Baixa | Baixo | Desligar o encoder "proxy" e transcodificar a prévia sob demanda |
+| Algum anti-cheat sinalizar o app (Gamers Club, FACEIT, Vanguard) | Baixa–média | Alto | Sem injeção, handles mínimos, build assinada, testes por anti-cheat, contato com os fornecedores |
+| Borda amarela no Windows 10 incomodar | Alta | Médio | Explicar que não sai no vídeo e oferecer o modo DDA recortado |
+| Borda não removível sem pacote MSIX | Média | Médio | Protótipo da Fase 0 decide o empacotamento |
+| Jogo em fullscreen exclusivo | Média | Médio | Detecção + pedir "sem bordas" + fallback DDA com aviso |
+| Bloqueio de NTS ou UDP 123 na rede do usuário | Baixa | Médio | Fallback: NTP sem autenticação (marcado nos metadados) e P2P puro |
+| Assimetria de rota piorar a sincronia | Média | Médio | Pacotes de menor RTT, regressão de dois lados, ajuste fino no editor |
+| Pós-roll perder o começo do clipe | — | Alto | Mecanismo "fixar e coletar" desde o pedido |
+| Upload atrapalhar o ping | Média | Alto | Limitador, prévia primeiro, "enviar ao fim da partida" |
+| R2 fora do Brasil (LGPD) | Alta | Médio | Criptografia de ponta a ponta, transparência, opção S3 São Paulo |
+| ECA Digital / menores | Média | Alto | Revisão jurídica, padrões protetivos, modo sem nuvem |
+| GPU sem encoder | Baixa | Médio | GPU integrada ou x264 720p30 com aviso |
+| Medal mudar para WGC por padrão | Média | Baixo | O diferencial do DuoClip é a sincronia entre POVs, não o método de captura |
 
 ---
 
-## 16. Fontes
+## 17. Fontes
 
-**Captura de vídeo (WGC, DXGI, hooks)**
-- Microsoft Learn: [GraphicsCaptureSession](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession) · [IsBorderRequired](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.isborderrequired) · [IsCursorCaptureEnabled](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.iscursorcaptureenabled?view=winrt-26100) · [GraphicsCaptureAccess.RequestAccessAsync](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscaptureaccess.requestaccessasync?view=winrt-20348) · [Direct3D11CaptureFrame.SystemRelativeTime](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframe.systemrelativetime?view=winrt-26100) · [Desktop Duplication API](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/desktop-duplication-api) · [SetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity)
-- Windows Developer Blog: [New ways to do screen capture](https://blogs.windows.com/windowsdeveloper/2019/09/16/new-ways-to-do-screen-capture/)
-- OBS Forum: [WGC vs DXGI Desktop Duplication](https://obsproject.com/forum/threads/windows-graphics-capture-vs-dxgi-desktop-duplication.149320) · [Game/Window/Display capture: diferença de desempenho](https://obsproject.com/forum/threads/game-capture-window-capture-or-display-capture-whats-the-actual-difference-in-performance.164599/post-603991) · [DXGI derrubando FPS](https://obsproject.com/forum/threads/using-capture-method-dxgi-desktop-duplication-ruins-performance-on-games.154062)
-- [OBS: código do WinRT capture (checagem de IsBorderRequired)](https://git.tjdev.de/mirror/obs-studio/src/commit/ee144377dc50b5d9f1fdf0598cea56f7e34eab9b/libobs-winrt/winrt-capture.cpp)
-- [Win32CaptureSample — issue sobre MinUpdateInterval](https://github.com/robmikh/Win32CaptureSample/issues/82) · [WebRTC: WGC pula frames estáticos no 26100](https://webrtc.googlesource.com/src/+/aaf8f8b89241508585ba4fed256e77fafb465844) · [GStreamer: d3d11screencapturesrc no 24H2](https://discourse.gstreamer.org/t/d3d11screencapturesrc-problem-on-windows-11-24h2/3925) · [GStreamer: d3d11 vs d3d12 screen capture](https://discourse.gstreamer.org/t/d3d11screencapturesrc-vs-d3d12screencapturesrc/2080/2)
-- [IOActive: "The DRM flag that isn't DRM"](https://www.ioactive.com/the-drm-flag-that-isnt-drm/)
-- [win.gg: OBS Game Capture e Vanguard (Valorant/LoL)](https://win.gg/obs-game-capture-not-working-valorant-league-of-legends-fix/) · [Riot Vanguard (Wikipedia)](https://en.wikipedia.org/wiki/Riot_Vanguard) · [Riot: Vanguard e VALORANT](https://playvalorant.com/it-it/news/game-updates/vanguard-x-valorant/)
+**Métodos de captura (detalhes no [anexo](anexo-metodos-de-captura-obs-medal.md))**
+- Código do OBS (commit c5bcbca): [game-capture.c](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/plugins/win-capture/game-capture.c#L833-L961) · [inject-library.c](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/shared/obs-inject-library/inject-library.c#L12-L134) · [window-capture.c](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/plugins/win-capture/window-capture.c#L113-L169) · [winrt-capture.cpp](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/libobs-winrt/winrt-capture.cpp#L160-L330) · [duplicator-monitor-capture.c](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/plugins/win-capture/duplicator-monitor-capture.c#L250-L301) · [compatibility.json](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/plugins/win-capture/data/compatibility.json) · [win-wasapi](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/plugins/win-wasapi/win-wasapi.cpp#L636-L750) · [obs-ffmpeg-mux.c (replay buffer)](https://github.com/obsproject/obs-studio/blob/c5bcbca63fc32f8341c08e1f921b2b81ec46be00/plugins/obs-ffmpeg/obs-ffmpeg-mux.c#L917-L952) · [PR #2208 (medição do WGC)](https://github.com/obsproject/obs-studio/pull/2208) · [Release 31.0.0](https://github.com/obsproject/obs-studio/releases/tag/31.0.0) · [KB: certificado do hook](https://obsproject.com/kb/capture-hook-certificate-update)
+- Medal: [Antivírus: "Medal injeta nos seus jogos"](https://support.medal.tv/support/solutions/articles/48001166446) · [Advanced Window Capture](https://support.medal.tv/support/solutions/articles/48001171330-what-is-advanced-window-capture-) · [Clipes pretos](https://support.medal.tv/support/solutions/articles/48000922110-black-clips-stuck-in-1-frame) · [Logs do Medal 2023 (terceiros)](https://github.com/lokritshok/FinalAssignmentVisualStudio/tree/56a6de5bb9724af85d50ffe30434706cbad5a4f5/Medal) · [Análise do recorder 2026 (terceiros)](https://github.com/RyanTheTechMan/medal-cross-platform/tree/6b660dacc116fe09774590df828d40482202de6f/research) · [Medialooks: estudo de caso](https://blog.medialooks.com/medal-captures-game-moments-with-mformats/) · [Game API captureDelayMs](https://github.com/YoYoGames/GMEXT-Medal/blob/2284effa4b093406e6fb5dd40d934862389830db/spec/medal-openapi.yaml#L100-L108) · [Links que expiram](https://support.medal.tv/support/solutions/articles/48001259493-how-to-upload-clips-expiring-links)
+- Outros: [rbuf (NvFBC, medições)](https://github.com/r3clusionn/rbuf) · [AMF Display Capture](https://github.com/GPUOpen-LibrariesAndSDKs/AMF/blob/8c648005e07d4309033282bfd9947df2c7e76104/amf/doc/AMF_Display_Capture_API.md) · [Discord: captura de janela](https://support.discord.com/hc/en-us/articles/9410427556375--Windows-Capturing-Application-Window-for-Screen-Share-and-Go-Live) · [SteelSeries Capture Mode](https://support.steelseries.com/hc/en-us/articles/34379253751309-What-is-Moments-Capture-Mode) · [Overwolf types (capture past/future)](https://github.com/overwolf/types/blob/master/overwolf.d.ts#L873-L1010) · [Steam Game Recording](https://help.steampowered.com/faqs/view/23B7-49AD-4A28-9590) · [Steamworks Timeline](https://github.com/rlabrecque/Steamworks.NET/blob/master/com.rlabrecque.steamworks.net/Runtime/autogen/isteamtimeline.cs#L88-L152) · [Allstar](https://allstar.gg/howitworks) · [Sunshine display_wgc.cpp](https://github.com/LizardByte/Sunshine/blob/0594f62d4cc6179aa055f0363043adbc8849b62b/src/platform/windows/display_wgc.cpp#L140-L168) · [Win32CaptureSample #82](https://github.com/robmikh/Win32CaptureSample/issues/82)
+- Microsoft: [IsBorderRequired (build 20348)](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.isborderrequired) · [RequestAccessAsync](https://github.com/MicrosoftDocs/winrt-api/blob/docs/windows.graphics.capture/graphicscaptureaccess_requestaccessasync_1551329835.md) · [SystemRelativeTime](https://github.com/MicrosoftDocs/winrt-api/blob/docs/windows.graphics.capture/direct3d11captureframe_systemrelativetime.md) · [Process loopback params (20348)](https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params.md) · [GetBuffer (QPC 100 ns)](https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/audioclient/nf-audioclient-iaudiocaptureclient-getbuffer.md) · [Desktop Duplication: AcquireNextFrame](https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/dxgi1_2/nf-dxgi1_2-idxgioutputduplication-acquirenextframe.md)
 
-**Medal e produtos parecidos**
-- Medal: [Advanced Window Capture](https://support.medal.tv/support/solutions/articles/48001171330-what-is-advanced-window-capture-) · [Clipes pretos / frame travado](https://support.medal.tv/support/solutions/articles/48000922110-black-clips-black-screen) · [Instant replay](https://medal.tv/learn/instant-replay-pc) · [Clips You're In](https://medal.tv/features/clips-you-are-in) · [CS2 (tag de squad)](https://medal.tv/developer/cs2) · [Medal 3.0 / Sessions (2021)](https://pressreleases.triplepointpr.com/2021/12/14/medal-tv-launches-medal-3-0-becomes-the-largest-game-clipping-social-network-in-the-world/) · [Medal vs Insights Capture](https://medal.tv/compare/medal-vs-insights-capture)
-- [MultiView Sync Player](https://apps.microsoft.com/detail/9p6r3kvkjzlb?hl=en-US&gl=US) · [VOD Review](https://vodreview.app/) · [MultiPOV](https://watchmultipov.app/) · [Multi-video-syncer](https://github.com/BlackwellArchitecture/Multi-video-syncer) · [Outplayed](https://outplayed.tv/) · [Buffero (replay com WGC)](https://gitblind.noratr.app/SamiKamara/Buffero)
+**Relógio global**
+- [Windows Time: configurações padrão](https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/networking/windows-time-service/Windows-Time-Service-Tools-and-Settings.md) · [Limites de alta precisão](https://github.com/MicrosoftDocs/SupportArticles-docs/blob/main/support/windows-server/active-directory/support-boundary-high-accuracy-time.md) · [Hora precisa no Windows](https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/networking/windows-time-service/accurate-time.md) · [QPC: timestamps de alta resolução](https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/SysInfo/acquiring-high-resolution-time-stamps.md)
+- [NTP.br (apresentação IX Fórum Fortaleza 2026: NTS em todos os servidores)](https://fortaleza.forum.ix.br/files/apresentacao/arquivo/2460/02-ApresentacaoNTP.br-IXForumFortaleza2026.pdf) · [ntp.br](https://ntp.br/) · [Lista de servidores NTS](https://github.com/jauderho/nts-servers) · [Cloudflare Time Services](https://github.com/cloudflare/cloudflare-docs/blob/production/src/content/docs/time-services/ntp/index.mdx) · [Cloudflare NTS](https://github.com/cloudflare/cloudflare-docs/blob/production/src/content/docs/time-services/nts.mdx) · [Google: leap smear](https://developers.google.com/time/smear) · [Política de vendors do NTP Pool](https://www.ntppool.org/vendors) · [RFC 8915 (NTS)](https://datatracker.ietf.org/doc/html/rfc8915) · [SIDN Labs: grandes provedores de hora](https://www.sidnlabs.nl/downloads/4ZYbgAM6xtydn2DCkwMctt/8e9a3d7793e620ae2096bd24ba173399/BigTime_Characterizing_Large_Time_Service_Providers_tech_report_20251201.pdf)
+- [chrony FAQ](https://raw.githubusercontent.com/mlichvar/chrony/master/doc/faq.adoc) · [chrony.conf](https://raw.githubusercontent.com/mlichvar/chrony/master/doc/chrony.conf.adoc) · [Filtro do NTP (Mills)](https://www.eecis.udel.edu/~mills/ntp/html/filter.html) · [ntpd-rs / ntp-proto](https://github.com/pendulum-project/ntpd-rs) · [rkik-nts](https://crates.io/crates/rkik-nts) · [sntpc](https://crates.io/crates/sntpc) · [IANA leap-seconds.list](https://github.com/eggert/tz/blob/main/leap-seconds.list) · [Valve: interpolação no Source](https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking) · [NIST: precisão do NTP](https://tf.nist.gov/general/pdf/2776.pdf)
 
-**Codificação e replay buffer**
-- [FFmpeg wiki: Capture/Desktop (ddagrab, D3D11 → NVENC)](https://trac.ffmpeg.org/wiki/Capture/Desktop) · [FFmpeg: código do gfxcapture (WGC)](https://www.ffmpeg.org/doxygen/trunk/vsrc__gfxcapture__winrt_8cpp_source.html) · [FFmpeg 8.1: novidades](https://en.ubunlog.com/ffmpeg-8.1-release-new-features-vulkan-jpeg-xs-spatial-audio/)
-- OBS Forum: [replay buffer e NVENC (keyframe)](https://obsproject.com/forum/threads/replay-buffer-problems-with-nvenc-fix-found.23663/latest) · [duração do replay varia (keyframe)](https://obsproject.com/forum/threads/replay-length-varies-erratically.182514/) · [buffer de 20 minutos (cálculo de memória)](https://obsproject.com/forum/threads/i-want-the-obs-replay-buffer-to-save-20-minutes-of-footage.108847)
-- [windows-capture (Rust)](https://github.com/NiiightmareXD/windows-capture) · [docs.rs/windows-capture](https://docs.rs/windows-capture) · [mediaway-encoder: benchmarks (MFT da NVIDIA)](https://docs.rs/crate/mediaway-encoder/0.1.3/source/docs/windows/benchmarks.md)
-- Licença do libobs: [OBS License inquiry](https://obsproject.com/forum/threads/obs-license-inquiry.58557)
+**Pós-roll e buffers**
+- [FFmpeg: MP4 fragmentado decodificável após interrupção](https://github.com/FFmpeg/FFmpeg/blob/master/doc/muxers.texi#L405-L414) · [OBS mp4-mux (Hybrid MP4)](https://github.com/obsproject/obs-studio/blob/39c2de975bb94058553fe8da85cb991c28b37202/plugins/obs-outputs/mp4-mux.c#L2900-L3010) · [NVENC FORCEIDR](https://github.com/FFmpeg/nv-codec-headers/blob/master/include/ffnvcodec/nvEncodeAPI.h#L684-L686) · [AMF VideoEncoderVCE](https://github.com/GPUOpen-LibrariesAndSDKs/AMF/blob/master/amf/public/include/components/VideoEncoderVCE.h) · [OBS fórum: gravar após o atalho](https://obsproject.com/forum/threads/replay-buffer-record-after-hotkey.152956/)
 
-**Áudio**
-- Microsoft Learn: [Exemplo Application Loopback](https://learn.microsoft.com/en-us/samples/microsoft/windows-classic-samples/applicationloopbackaudio-sample/) · [AUDIOCLIENT_ACTIVATION_TYPE](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ne-audioclientactivationparams-audioclient_activation_type) · [PROCESS_LOOPBACK_MODE](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ne-audioclientactivationparams-process_loopback_mode) · [AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params) · [ActivateAudioInterfaceAsync](https://learn.microsoft.com/en-us/windows/desktop/api/mmdeviceapi/nf-mmdeviceapi-activateaudiointerfaceasync) · [IAudioCaptureClient::GetBuffer](https://msdn.microsoft.com/en-us/library/dd370859)
-- [GStreamer wasapi2: process loopback no Win10 19041](https://git.fasttube.de/FaSTTUBe/GST-Tensordecoder-ov_ep/commit/c98ad6f249f72db4eb6a2bca911f3c57808b197e) · [OBS KB: Application Audio Capture](https://obsproject.com/kb/application-audio-capture-guide) · [OBS Forum: app audio capture não pega o Discord](https://obsproject.com/forum/threads/application-audio-capture-does-not-capture-discord.180888) · [OBS Forum: voz do Discord duplicada](https://obsproject.com/forum/threads/troubleshooting-discord-audio-goes-through-both-desktop-audio-and-microphone.134128) · [Overwolf: ApplicationAudioCaptureParams](https://dev.overwolf.com/ow-electron/reference/Overwolf-electron-APIs/recorder/interfaces/ApplicationAudioCaptureParams)
+**Bucket**
+- [R2: preços](https://developers.cloudflare.com/r2/pricing/) · [R2: ciclo de vida](https://developers.cloudflare.com/r2/buckets/object-lifecycles/) · [R2: local de dados](https://developers.cloudflare.com/r2/reference/data-location/) · [R2: Local Uploads](https://developers.cloudflare.com/r2/buckets/local-uploads/) · [R2: URLs pré-assinadas](https://developers.cloudflare.com/r2/api/s3/presigned-urls/) · [R2: credenciais temporárias](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) · [R2: limites de upload](https://developers.cloudflare.com/r2/objects/upload-objects/)
+- [AWS S3 sa-east-1 (Price List API)](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/sa-east-1/index.json) · [AWS Data Transfer sa-east-1](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSDataTransfer/current/sa-east-1/index.json) · [S3 lifecycle](https://github.com/awsdocs/amazon-s3-developer-guide/blob/master/doc_source/intro-lifecycle-rules.md) · [GCS: preços](https://cloud.google.com/storage/pricing) · [GCS: soft delete](https://docs.cloud.google.com/storage/docs/soft-delete) · [Supabase: preços](https://supabase.com/pricing) · [Supabase: lifecycle (só noncurrent)](https://github.com/supabase/supabase-js/blob/master/packages/core/storage-js/src/packages/StorageBucketApi.ts) · [Supabase: uploads resumíveis](https://supabase.com/docs/guides/storage/uploads/resumable-uploads) · [Supabase: controle de acesso](https://supabase.com/docs/guides/storage/security/access-control) · [Backblaze B2](https://www.backblaze.com/cloud-storage/pricing) · [Wasabi](https://wasabi.com/pricing)
 
-**Sincronização de relógio**
-- [NIST: Novick & Lombardi, precisão do NTP](https://tf.nist.gov/general/pdf/2776.pdf) · [Mkacher & Duda: assimetria e calibração do NTP](https://hal.univ-grenoble-alpes.fr/hal-02305093/document) · [URSI 2025: Matsakis, Jones & Novick](https://www.ursi.org/proceedings/procAP25/papers/0686.pdf) · [time-nuts: NTP e atrasos assimétricos](https://www.febo.com/pipermail/time-nuts/2016-October/100779.html)
+**Windows, mercado e legislação**
+- [Windows 10 ESU estendido até 12/10/2027 (Help Net Security)](https://www.helpnetsecurity.com/2026/06/26/microsoft-windows-10-free-security-updates-esu-program/) · [StatCounter: versões do Windows no Brasil](https://gs.statcounter.com/windows-version-market-share/desktop/brazil) · [RX 6500 XT sem encoder (TechSpot)](https://www.techspot.com/news/93070-amd-admits-navi-24-gpu-used-radeon-rx.html) · [GT 1030 sem NVENC (fórum OBS)](https://obsproject.com/forum/threads/no-nvenc-option-with-gt-1030-card.68836/latest)
+- [ECA Digital em vigor em 17/03/2026 (Machado Meyer)](https://www.machadomeyer.com.br/pt/inteligencia-juridica/publicacoes-ij/direito-digital/estatuto-digital-da-crianca-e-do-adolescente-lei-n-15-211-2025-entra-em-vigor-em-17-de-marco-de-2026) · [ECA Digital e jogos (UFJF)](https://www2.ufjf.br/inovagames/2026/04/13/eca-digital-e-marco-legal-dos-games-o-que-muda-na-legalidade-dos-jogos-no-brasil/) · [Mayer Brown: novas obrigações](https://www.mayerbrown.com/pt/insights/publications/2026/04/enforcement-of-brazils-eca-digital-introduces-new-obligations-for-companies) · [LGPD (Lei 13.709/2018)](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)
+- Da versão 1: [Store gratuita para pessoa física](https://blogs.windows.com/windowsdeveloper/2025/09/10/free-developer-registration-for-individual-developers-on-microsoft-store/) · [Artifact Signing FAQ](https://learn.microsoft.com/azure/trusted-signing/faq) · [libdatachannel](https://github.com/achingbrain/libdatachannel/blob/master/README.md) · [OpenVidu: TURN](https://openvidu.io/blog/2026/06/09/turn-key-considerations/) · [web.dev: requestVideoFrameCallback](https://web.dev/articles/requestvideoframecallback-rvfc?hl=pt-br) · [MultiView Sync Player](https://apps.microsoft.com/detail/9p6r3kvkjzlb?hl=en-US&gl=US) · [VOD Review](https://vodreview.app/)
 
-**Rede**
-- [libdatachannel](https://github.com/achingbrain/libdatachannel/blob/master/README.md) · [webrtc-rs](https://docsearch.algolia.com/mcp/docs/repo/webrtc-rs/webrtc) · [str0m](https://www.linuxlinks.com/str0m-sans-io-webrtc-implementation/)
-- Percentual de conexões que precisam de TURN: [OpenVidu (2026)](https://openvidu.io/blog/2026/06/09/turn-key-considerations/) · [100ms](https://www.100ms.live/blog/webrtc-turn-server) · [EasyRTC](https://github.com/gunjank/easyrtc/blob/master/docs/easyrtc_server_ice.md) · [Forasoft](https://www.forasoft.com/learn/video-streaming/glossary/terms-streaming/nat)
-
-**Editor**
-- [web.dev: requestVideoFrameCallback](https://web.dev/articles/requestvideoframecallback-rvfc?hl=pt-br) · [MDN: requestVideoFrameCallback](https://developer.mozilla.org/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback)
-
-**Distribuição e assinatura**
-- [Windows Dev Blog: cadastro gratuito para pessoa física na Store (09/2025)](https://blogs.windows.com/windowsdeveloper/2025/09/10/free-developer-registration-for-individual-developers-on-microsoft-store/) · [Store gratuita também para empresas (05/2026)](https://blogs.windows.com/windowsdeveloper/2026/05/07/publish-to-microsoft-store-as-a-company-now-with-free-registration-and-faster-onboarding/)
-- [Artifact Signing: preços](https://azure.microsoft.com/pricing/details/artifact-signing/) · [FAQ (elegibilidade)](https://learn.microsoft.com/azure/trusted-signing/faq) · [Opções de assinatura de código](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options) · [DevClass (01/2026)](https://devclass.com/2026/01/14/code-signing-windows-apps-may-be-easier-and-more-secure-with-new-azure-artifact-service/)
-
-> **Observação sobre a confiabilidade:** parte dos dados vem de documentação oficial (Microsoft, NIST, FFmpeg) e parte de relatos de fóruns e blogs, como o comportamento do WGC no 24H2, o percentual de TURN e os relatos sobre o Discord. Os itens marcados como "a validar" devem ser confirmados nas provas de conceito da Fase 0 e da Fase 2.
+> **Confiabilidade:**
+> - O código do OBS, a documentação da Microsoft, os preços do R2, do S3, do GCS e do Supabase e os fatos de NTS da Cloudflare foram **conferidos em fonte primária** por um verificador independente.
+> - O comportamento do Medal vem do suporte do próprio Medal (injeção) e de logs e análises de **terceiros** (os detalhes).
+> - Os preços do B2 e da Wasabi, o limite de sessões NVENC, os detalhes internos da Steam e a precisão de NTP em redes brasileiras **não puderam ser reconferidos** e estão marcados no texto.
