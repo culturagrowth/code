@@ -4,7 +4,7 @@
 > Resume **tudo o que foi pedido, pesquisado, decidido e implementado** na conversa de 07–08/10/2026
 > (sessão Claude Code na nuvem). Mantenha este arquivo atualizado a cada decisão importante.
 >
-> - Repositório: `nicolaspercio1/code` (antes `culturagrowth/code`, apagado em 08/10/2026) · branch de trabalho: `claude/sync-gameplay-clip-app-xpgfwx`
+> - Repositório: `nicolaspercio1/duoclip` (antes `culturagrowth/code`, apagado em 08/10/2026) · branch de trabalho: `claude/sync-gameplay-clip-app-xpgfwx`
 > - Idioma de trabalho: **português do Brasil**. O código e os comentários ficam em inglês.
 > - Documentos principais:
 >   - [`docs/pesquisa-app-clipes-sincronizados.md`](pesquisa-app-clipes-sincronizados.md): pesquisa e arquitetura completas;
@@ -323,7 +323,7 @@ Os diagnósticos ficam no crate `crates/duoclip-smoke` (`sysinfo`, `audio_probe`
 ## 7. Como retomar em outro ambiente
 
 ```bash
-git clone https://github.com/nicolaspercio1/code.git && cd code
+git clone https://github.com/nicolaspercio1/duoclip.git && cd code
 git checkout claude/sync-gameplay-clip-app-xpgfwx
 
 # Rust estável (usamos 1.97). No Windows, use o toolchain MSVC padrão.
