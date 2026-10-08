@@ -13,7 +13,8 @@ Nenhum achado bloqueante na revisão do código. O fluxo normal mantém a captur
 janela escolhida, usa fontes de áudio configuradas sem substituir falhas por captura geral
 do sistema, estende o clipe em apertos repetidos e salva em arquivo temporário antes de
 renomear o MP4. O microfone vem desligado por padrão. O encerramento normal drena as fontes
-e aguarda os salvamentos. Isso é conclusão da revisão; a execução com hardware ainda falta.
+e aguarda os salvamentos. A execução com hardware abaixo confirmou parte do fluxo;
+a captura da imagem real ainda falta validar.
 
 ## Verificações executadas sem gravação
 
@@ -25,7 +26,8 @@ e aguarda os salvamentos. Isso é conclusão da revisão; a execução com hardw
   a segunda não criou o arquivo de configuração.
 
 Logs locais: `test-output/review-recorder/{fmt,clippy,tests,gnu,help,config}.log`.
-Nenhum teste ignorado, captura de tela, áudio de processos ou microfone foi executado.
+Nesta etapa não foram executados testes ignorados nem gravação. O teste autorizado
+posteriormente está registrado abaixo; áudio de processos e microfone não foram capturados.
 
 ## Achado menor, sem bloquear o teste
 
@@ -36,15 +38,44 @@ sem validar as cores/movimento nem o tom de 440 Hz. Um MP4 com quadros de prote�
 áudio silencioso poderia passar essas verificações. Sugestão: conferir o conteúdo do MP4
 produzido ao executar este teste; reforçar suas asserções futuramente, se necessário.
 
-## Teste real preparado, ainda não verificado
+## Teste real executado — validação parcial
 
-Após confirmação do usuário, executar somente `records_test_window_and_saves_clip` do
-teste `recorder_hw`. Ele abre sua própria janela colorida, captura o recorte dela e injeta
-áudio sintético; não abre microfone nem captura jogo ou Discord. O MP4 fica em
-`test-output/recorder/recorder-e2e.mp4` deste worktree. Conferir também seu conteúdo.
+O usuário confirmou em 08/10/2026: "pode rodar o teste". Também reafirmou que pontos finos
+devem ser anotados com prioridade baixa, conforme decisão 19. Nenhuma mudança de código
+foi feita para esses pontos.
+
+Executado apenas o teste autorizado, em Windows com a RTX 5060 Ti:
+
+```text
+cargo test -p duoclip-recorder --test recorder_hw -- --ignored --exact records_test_window_and_saves_clip --nocapture --test-threads=1
+```
+
+**1 teste passou, 0 falhas**, em 11,45 s após a compilação. A janela própria foi criada,
+mas `test window is the foreground window: false`; o gravador emitiu quadros de proteção
+escuros. Não afrouxamos essa proteção nem usamos o modo de teste que ignora primeiro plano.
+
+- Encoder efetivo: `NVIDIA H.264 Encoder MFT` (hardware).
+- Clipe coletado sem lacunas ou truncamento indicado pelo buffer.
+- MP4 salvo, **1280×720, 30 fps**, H.264 + AAC estéreo 48 kHz, **3,031 s**, 110.850 bytes.
+- Decodificação das duas faixas com `ffmpeg -xerror`: sem erros.
+- Áudio analisado depois de decodificar: RMS 0,1414; frequência estimada por cruzamentos
+  positivos de zero **440,005 Hz**, confirmando o tom sintético, sem silêncio.
+- Inspeção visual de um quadro e análise de todos os **90 quadros apresentados**,
+  reduzidos a 64×36: uma única imagem distinta, canais de 0 a 13. As cores e o movimento
+  **não foram capturados**. Isso confirma a limitação REC-1, não um teste completo de imagem.
+
+Arquivo: `test-output/recorder/recorder-e2e.mp4` deste worktree.
+Evidências adicionais: `test-output/review-recorder/hardware.log`, `frame-1s.png`,
+`audio.wav`, `verify_media.py` e `media-verification.json` (todos locais, ignorados pelo Git).
+SHA-256 do MP4: `acf64de1ef67bb858846f0619807516828c86689b975262888cae5609a9ff1ee`.
+
+Para validar a imagem, repetir o teste mantendo a janela colorida em primeiro plano.
+A confirmação já concedida cobre a repetição desse mesmo teste; não precisa pedi-la de novo.
 
 Esse teste não valida a detecção de um jogo real, o registro do atalho nem as fontes WASAPI
 de jogo/Discord/microfone. Essas partes continuam **não verificadas com hardware**.
 Permanecem os limites já documentados da captura DDA, inclusive sobreposições visíveis.
 
-**Veredito: aprovado**, com o teste real pendente e o achado menor acima registrado.
+**Veredito: aprovado**, com validação de imagem pendente e REC-1 registrado como menor,
+sem prioridade de implementação. O teste confirma encoder, áudio sintético, coleta e
+MP4 reproduzível; não confirma captura das cores/movimento nem gravação de jogo real.
