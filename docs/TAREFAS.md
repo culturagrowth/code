@@ -35,6 +35,12 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 
 ## Concluídas
 
+Tarefa adicional em andamento:
+
+| # | Tarefa | Fase | Escopo | Dono | Revisor | Status | Branch | Notas |
+|---|---|---|---|---|---|---|---|---|
+| 19 | Comando de teste do fluxo de grupo com dois participantes: cadastro, convite e presença | C | `worker/tools/crew-smoke.ts`, teste correspondente, scripts e documentação Worker | GPT | Claude | em andamento | `gpt/crew-smoke` | Teste prático local, sem captura ou credenciais R2; não altera o adaptador de presença da tarefa 17 |
+
 | # | Tarefa | Dono | Revisor | Branch / commit | Resumo |
 |---|---|---|---|---|---|
 | — | Fase A: proto, crypto, clock, buffer e worker | Claude | Claude (subagentes, antes da regra) | `eccb62a` | Pode ganhar revisão do GPT depois, se o usuário quiser |
