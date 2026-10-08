@@ -152,7 +152,7 @@ Nenhuma ferramenta **dispara o clipe em vários PCs ao mesmo tempo com sincronia
 
 - Os métodos mais leves que existem (driver e hook) **não estão disponíveis** para nós. O NvFBC é restrito e descontinuado. O hook exige uma exceção nos anti-cheats que só OBS e similares têm, e atrairia ban e bloqueio. Até o OBS teve problemas de compatibilidade quando trocou o certificado na versão 31.
 - O WGC custa pouco. A medição do OBS deu ~200–800 µs de CPU por frame e um pouco menos de GPU que o BitBlt.
-- O WGC **não injeta nada**, grava **só a janela do jogo** e é para onde Discord, SteelSeries e o próprio Medal estão indo.
+- O WGC **não injeta nada** e grava **só a janela do jogo**. Discord e SteelSeries já o oferecem. No Medal ele é só um modo **opcional** ("Advanced Window Capture"): o padrão do Medal é o hook injetado, e é por isso que o Medal não mostra borda amarela.
 - **Não existe benchmark independente** comparando todos os métodos em FPS. Vamos medir nós mesmos com **PresentMon** na Fase 0 (CS2, Valorant, Fortnite, LoL, Minecraft e Roblox, em hardware médio do Brasil).
 
 ### 4.6 Cadeia de fallback
@@ -680,7 +680,7 @@ duoclip/
 | Pós-roll perder o começo do clipe | — | Alto | Mecanismo "fixar e coletar" desde o pedido |
 | Upload atrapalhar o ping | Média | Alto | Limitador, prévia primeiro, "enviar ao fim da partida" |
 | GPU sem encoder | Baixa | Médio | GPU integrada ou x264 720p30 com aviso |
-| Medal mudar para WGC por padrão | Média | Baixo | O diferencial do DuoClip é a sincronia entre POVs, não o método de captura |
+| Medal mudar de método de captura | Baixa | Baixo | O diferencial do DuoClip é a sincronia entre POVs, não o método de captura |
 
 ---
 

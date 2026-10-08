@@ -156,5 +156,5 @@ Faça um teste "caixa-preta" num PC de vocês com Windows 11 e o Medal atual nas
 - Os dois métodos mais eficientes que existem (driver e hook) **não estão disponíveis** de forma legítima e segura para um app novo:
   - o NvFBC é restrito e descontinuado;
   - o hook depende de uma exceção nos anti-cheats que só OBS e similares têm, e o CS2 em modo confiável não aceita injeção de terceiros.
-- **Entre os métodos que podemos usar, o WGC de janela é o mais eficaz.** É também a direção que Discord, SteelSeries e o próprio Medal (Advanced Window Capture) estão seguindo.
+- **Entre os métodos que podemos usar, o WGC de janela é o mais eficaz.** Discord e SteelSeries já o oferecem. No Medal ele é só um modo opcional; o padrão do Medal é o hook injetado, sem borda amarela.
 - A comprovação final vem do **nosso benchmark com PresentMon** na Fase 0.
