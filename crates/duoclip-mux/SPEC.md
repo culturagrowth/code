@@ -103,3 +103,13 @@ environment (`/usr/bin/ffmpeg` with libx264 and aac).
 - Additive API: `TrackSpec::{track, timescale, is_video}`, `VIDEO_TIMESCALE`, `MOVIE_TIMESCALE`, re-exports of `Packet`, `SharedPacket`, `TrackId`.
 - ffprobe quirk (not a file bug): for fragmented files whose audio starts after 0, ffmpeg reports the audio stream "duration" as its end time,
   so the format duration looks longer by the start offset. Progressive files report it correctly.
+- Completion pass (2026-10-08): every API item and requirement above was already implemented; this pass only strengthened the
+  ffmpeg tests (39 tests total: 22 unit, 7 ffmpeg, 9 structure, 1 doctest). `ffmpeg` decoding now uses `-xerror` (`-v error -xerror
+  -i f -map 0 -f null -`, fails on the first decode error). `check_packets` (tests/common) reads `ffprobe -show_entries
+  packet=stream_index,pts,dts,duration,flags` and checks per stream: packet count, strictly increasing pts and dts, `pts == dts`,
+  constant step (1500 ticks video / 1024 audio) equal to each packet duration, first pts and first-packet keyframe flag. Audio frame
+  counts are now exact (no ±1), audio durations are checked too. The truncated test also cuts after every fragment and inside
+  fragment 3. The trim test checks the negative leading pts (−0.5 s in both tracks) and the audio frames output after the in-point.
+  New end-to-end test: the real fixture goes through `duoclip_buffer::ClipManager`; its `Fragment`s feed `FragmentedWriter` and the
+  `FinishedClip` (trimmed to the window start with `write_progressive`) decodes with the expected frame counts and durations.
+  The ffmpeg tests skip (with an `eprintln!`) when `ffmpeg`/`ffprobe` are not on PATH. Set `DUOCLIP_MUX_KEEP=<absolute dir>` to keep the produced MP4s (e.g. `test-output/mux`).

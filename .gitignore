@@ -8,5 +8,5 @@ worker/dist
 
 # Local linked worktrees and Claude Code bootstrap instructions.
 /worktrees/
-.claude/worktrees/
+/.claude/
 CLAUDE.local.md

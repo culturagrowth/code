@@ -545,10 +545,116 @@ pub fn probe(path: &Path) -> Probe {
     Probe { streams, format }
 }
 
-/// Decodes every stream with `ffmpeg -v error -i <path> -map 0 -f null -` and returns stderr (empty = clean).
+/// One packet as listed by `ffprobe -show_packets` (times in the stream time base).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProbePacket {
+    pub stream: usize,
+    pub pts: i64,
+    pub dts: i64,
+    pub duration: i64,
+    pub keyframe: bool,
+}
+
+/// Every packet of the file in demux order (`ffprobe -show_entries packet=...`).
+pub fn probe_packets(path: &Path) -> Vec<ProbePacket> {
+    let out = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "packet=stream_index,pts,dts,duration,flags",
+            "-of",
+            "compact=nk=0",
+        ])
+        .arg(path)
+        .output()
+        .expect("run ffprobe");
+    assert!(
+        out.status.success(),
+        "ffprobe -show_packets failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let int = |map: &HashMap<String, String>, key: &str| -> i64 {
+        map.get(key)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("packet without a numeric {key}: {map:?}"))
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('|');
+            (parts.next() == Some("packet")).then(|| {
+                let map: HashMap<String, String> = parts
+                    .filter_map(|kv| kv.split_once('='))
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
+                ProbePacket {
+                    stream: usize::try_from(int(&map, "stream_index")).unwrap(),
+                    pts: int(&map, "pts"),
+                    dts: int(&map, "dts"),
+                    duration: int(&map, "duration"),
+                    keyframe: map.get("flags").is_some_and(|f| f.starts_with('K')),
+                }
+            })
+        })
+        .collect()
+}
+
+/// Expected packet layout of one stream for [`check_packets`].
+pub struct StreamPackets {
+    pub codec_type: &'static str,
+    /// Number of packets the demuxer must return.
+    pub count: usize,
+    /// Exact pts step between consecutive packets, in the stream time base.
+    pub step: i64,
+    /// pts of the first packet (negative when an edit list skips media).
+    pub first_pts: i64,
+}
+
+/// Checks the demuxed packets of every expected stream: count, strictly increasing pts and dts,
+/// `pts == dts` (no B-frames), a constant step equal to each packet's duration, the first pts,
+/// and a keyframe flag on the first packet.
+pub fn check_packets(path: &Path, expected: &[StreamPackets]) {
+    let p = probe(path);
+    let packets = probe_packets(path);
+    for exp in expected {
+        let index = p
+            .streams
+            .iter()
+            .find(|s| s.get("codec_type").map(String::as_str) == Some(exp.codec_type))
+            .map(|s| num(s, "index") as usize)
+            .unwrap_or_else(|| panic!("no {} stream", exp.codec_type));
+        let stream: Vec<&ProbePacket> = packets.iter().filter(|q| q.stream == index).collect();
+        let what = format!("{} {}", path.display(), exp.codec_type);
+        assert_eq!(stream.len(), exp.count, "{what}: packet count");
+        assert_eq!(stream[0].pts, exp.first_pts, "{what}: first pts");
+        assert!(stream[0].keyframe, "{what}: first packet is a keyframe");
+        for q in &stream {
+            assert_eq!(q.pts, q.dts, "{what}: pts == dts expected: {q:?}");
+            assert_eq!(q.duration, exp.step, "{what}: packet duration: {q:?}");
+        }
+        for w in stream.windows(2) {
+            assert!(
+                w[1].pts > w[0].pts && w[1].dts > w[0].dts,
+                "{what}: pts/dts not strictly increasing: {:?} -> {:?}",
+                w[0],
+                w[1]
+            );
+            assert_eq!(
+                w[1].pts - w[0].pts,
+                exp.step,
+                "{what}: pts step at {:?}",
+                w[1]
+            );
+        }
+    }
+}
+
+/// Decodes every stream with `ffmpeg -v error -xerror -i <path> -map 0 -f null -` and returns
+/// stderr (empty = clean). `-xerror` makes ffmpeg stop with a failure status on the first error.
 pub fn decode_errors(path: &Path) -> String {
     let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-i"])
+        .args(["-v", "error", "-xerror", "-nostdin", "-i"])
         .arg(path)
         .args(["-map", "0", "-f", "null", "-"])
         .output()

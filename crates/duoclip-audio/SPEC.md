@@ -36,7 +36,8 @@ pub fn descendants(procs: &[ProcInfo], root: u32) -> Vec<u32>;
 
 /// Timestamp continuity helper: gives each chunk a QPC time. If the device QPC is missing or jumps backwards,
 /// extrapolate from the previous chunk + frames/48 kHz. Flag a discontinuity when the device time and the
-/// extrapolated time differ by more than `max_jump_100ns` (default 20 ms).
+/// extrapolated time differ by more than `max_jump_100ns`: `DEFAULT_MAX_JUMP_100NS` = 20 ms (mic, endpoint loopback) or
+/// `PROCESS_LOOPBACK_MAX_JUMP_100NS` = 20_000 hns = 2 ms (process-loopback streams; see the implementation notes).
 pub struct TimestampTracker { /* ... */ }
 impl TimestampTracker { pub fn new(max_jump_100ns: i64) -> Self; pub fn stamp(&mut self, device_qpc_100ns: Option<i64>, frames: u32) -> (i64, bool /*extrapolated*/, bool /*discontinuity*/); }
 
@@ -100,4 +101,14 @@ pub fn windows_build() -> u32;                                      // RtlGetVer
 - Process-loopback `GetBuffer` QPC positions are **synthetic**: exact 100 000 × 100 ns steps per 480-frame packet (the virtual device
   derives them from the sample count). They show no drift against QPC, but occasionally jump forward by ~8–9 ms with no flag
   (below the 20 ms `DEFAULT_MAX_JUMP_100NS`). The mic delivers real QPC (±0.1 ms jitter, ≈ −15…−19 ppm drift) and flags a
-  discontinuity on its first packet. Consider a smaller jump threshold (≈ 2 ms) for process-loopback tracks before integrating with the buffer.
+  discontinuity on its first packet.
+- **Per-stream jump threshold:** `capture.rs` picks the `TimestampTracker` threshold per `StreamKind` (`StreamKind::max_jump_100ns`):
+  process loopback uses the new `PROCESS_LOOPBACK_MAX_JUMP_100NS` = **20_000 hns (2 ms)** (exported from the crate root); mic and
+  endpoint loopback keep `DEFAULT_MAX_JUMP_100NS` (20 ms). Process-loopback positions are exact 10 ms steps, so any deviation above
+  2 ms is real: the ~8–9 ms forward jumps (e.g. +86_816 hns) now set `AudioChunk::discontinuity` instead of being absorbed silently.
+  Unit tests reproduce that pattern (flagged at 2 ms, not at 20 ms) and check that ±0.1 ms jitter is flagged by neither threshold.
+  The 2 ms value is a choice based on the observed pattern, not a documented Windows figure.
+- **Process-loopback silence has no `SILENT` flag:** while the target renders nothing, process loopback still delivers regular 10 ms
+  packets of digital silence (all-zero samples) **without** `AUDCLNT_BUFFERFLAGS_SILENT`. `AudioChunk::silent` stays the flag only
+  (plus a null buffer pointer, defensively); the crate does not inspect samples to infer silence. Consumers that need to know whether
+  a chunk is digital silence must check the samples themselves.

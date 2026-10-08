@@ -215,7 +215,7 @@ pub fn analyze_packets(packets: &[PacketRecord], rate: u32) -> AudioStats {
     let mut silent_content_frames = 0u64;
     let mut peak = 0f32;
     for p in packets {
-        stats.frames += u64::from(p.frames);
+        stats.frames = stats.frames.saturating_add(u64::from(p.frames));
         if p.silent {
             silent_flag_frames += u64::from(p.frames);
         }
@@ -234,20 +234,23 @@ pub fn analyze_packets(packets: &[PacketRecord], rate: u32) -> AudioStats {
     stats.sample_span_s = stats.frames as f64 / f64::from(rate);
     let first = packets[0].qpc_100ns;
     let last = packets[packets.len() - 1];
-    stats.qpc_span_s =
-        (last.qpc_100ns as f64 + f64::from(last.frames) * hns_per_frame - first as f64) / 1e7;
+    // Differences of raw QPC values are computed in i128: an i64 subtraction can overflow on
+    // hostile input (the CSV given to `--analyze` is not trusted).
+    let span_hns = i128::from(last.qpc_100ns) - i128::from(first);
+    stats.qpc_span_s = (span_hns as f64 + f64::from(last.frames) * hns_per_frame) / 1e7;
 
     // Split into gap-free segments.
     let mut segments: Vec<&[PacketRecord]> = Vec::new();
     let mut start = 0usize;
     for i in 1..packets.len() {
         let prev = packets[i - 1];
-        let expected = (f64::from(prev.frames) * hns_per_frame).round() as i64;
-        let actual = packets[i].qpc_100ns.saturating_sub(prev.qpc_100ns);
+        let expected = i128::from((f64::from(prev.frames) * hns_per_frame).round() as i64);
+        let actual = i128::from(packets[i].qpc_100ns) - i128::from(prev.qpc_100ns);
+        // |difference of two i64| always fits in i128, so neither the subtraction nor abs() panics.
         let error = (actual - expected).abs();
         stats.max_jump_ms = stats.max_jump_ms.max(error as f64 / 1e4);
-        stats.gaps += usize::from(error > GAP_TOLERANCE_100NS);
-        let jump = error > JUMP_TOLERANCE_100NS;
+        stats.gaps += usize::from(error > i128::from(GAP_TOLERANCE_100NS));
+        let jump = error > i128::from(JUMP_TOLERANCE_100NS);
         stats.jumps += usize::from(jump);
         if jump || packets[i].discontinuity {
             segments.push(&packets[start..i]);
@@ -272,7 +275,7 @@ pub fn analyze_packets(packets: &[PacketRecord], rate: u32) -> AudioStats {
             .map(|p| {
                 let x = cum;
                 cum += f64::from(p.frames);
-                (x, (p.qpc_100ns - base) as f64)
+                (x, (i128::from(p.qpc_100ns) - i128::from(base)) as f64)
             })
             .collect();
         let n = pts.len() as f64;
@@ -470,5 +473,118 @@ mod tests {
         assert_eq!(u16::from_le_bytes([bytes[20], bytes[21]]), 3);
         assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 16);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- SMK-1: hostile timestamps (the CSV given to `--analyze` is not trusted) ----
+
+    #[test]
+    fn extreme_qpc_values_never_panic() {
+        let extremes = [i64::MIN, i64::MIN + 1, -1, 0, 1, i64::MAX - 1, i64::MAX];
+        for &a in &extremes {
+            for &b in &extremes {
+                for frames in [0u32, 1, 480, u32::MAX] {
+                    for rate in [1u32, 48_000, u32::MAX] {
+                        let s = analyze_packets(&[packet(a, frames), packet(b, 480)], rate);
+                        assert_eq!(s.packets, 2);
+                        let s = analyze_packets(
+                            &[packet(a, frames), packet(b, 480), packet(a, frames)],
+                            rate,
+                        );
+                        assert_eq!(s.packets, 3);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn min_to_max_jump_is_counted_exactly() {
+        // The reproduction from the review: 0 / i64::MIN with 480 frames at 48 kHz.
+        let s = analyze_packets(&[packet(0, 480), packet(i64::MIN, 480)], 48_000);
+        assert_eq!((s.gaps, s.jumps), (1, 1));
+        let expected_hns = i64::MIN as i128 - 100_000; // actual - expected
+        let want = expected_hns.abs() as f64 / 1e4;
+        assert!(
+            (s.max_jump_ms - want).abs() <= want * 1e-12,
+            "{}",
+            s.max_jump_ms
+        );
+        assert!(s.qpc_span_s.is_finite() && s.max_jump_ms.is_finite());
+
+        // Full i64 range in one step: the difference needs more than 64 bits.
+        let s = analyze_packets(&[packet(i64::MIN, 480), packet(i64::MAX, 480)], 48_000);
+        assert_eq!((s.gaps, s.jumps), (1, 1));
+        assert!(s.max_jump_ms > 9.0e14, "{}", s.max_jump_ms);
+        assert!(s.qpc_span_s > 1.8e12, "{}", s.qpc_span_s);
+        // ... and the same pair backwards.
+        let s = analyze_packets(&[packet(i64::MAX, 480), packet(i64::MIN, 480)], 48_000);
+        assert_eq!((s.gaps, s.jumps), (1, 1));
+        assert!(s.qpc_span_s < -1.8e12, "{}", s.qpc_span_s);
+    }
+
+    #[test]
+    fn extreme_values_inside_a_long_stream_do_not_break_the_drift_fit() {
+        // A long clean stream, then a MIN/MAX excursion in the middle: the fit still runs on the
+        // longest clean segment.
+        let mut packets: Vec<_> = (0..300).map(|i| packet(i * 100_000, 480)).collect();
+        packets.push(packet(i64::MIN, 480));
+        packets.push(packet(i64::MAX, 480));
+        packets.extend((0..100).map(|i| packet(i64::MAX - 10_000_000 + i * 100_000, 480)));
+        let s = analyze_packets(&packets, 48_000);
+        assert!(s.jumps >= 2);
+        assert!((s.drift_segment_s - 3.0).abs() < 1e-9);
+        assert!(s.drift_ppm.unwrap().abs() < 1e-6);
+        // A segment sitting at the very top of the i64 range fits too (differences stay small).
+        let top: Vec<_> = (0..300)
+            .map(|i| packet(i64::MAX - 30_000_000 + i * 100_000, 480))
+            .collect();
+        let s = analyze_packets(&top, 48_000);
+        assert_eq!(s.jumps, 0);
+        assert!(s.drift_ppm.unwrap().abs() < 1e-3);
+        let bottom: Vec<_> = (0..300)
+            .map(|i| packet(i64::MIN + i * 100_000, 480))
+            .collect();
+        let s = analyze_packets(&bottom, 48_000);
+        assert_eq!(s.jumps, 0);
+        assert!(s.drift_ppm.unwrap().abs() < 1e-3);
+    }
+
+    #[test]
+    fn qpc_going_backwards_is_a_jump_not_a_panic() {
+        // A regression: the second packet is earlier than the first.
+        let s = analyze_packets(&[packet(1_000_000, 480), packet(500_000, 480)], 48_000);
+        assert_eq!((s.gaps, s.jumps), (1, 1));
+        assert!((s.max_jump_ms - 60.0).abs() < 1e-9, "{}", s.max_jump_ms);
+        assert!(s.qpc_span_s < 0.0);
+
+        // Regression in the middle of a long stream: two segments, fit on the longest.
+        let mut packets: Vec<_> = (0..200)
+            .map(|i| packet(10_000_000 + i * 100_000, 480))
+            .collect();
+        packets.extend((0..100).map(|i| packet(i * 100_000, 480)));
+        let s = analyze_packets(&packets, 48_000);
+        assert_eq!(s.jumps, 1);
+        assert!((s.drift_segment_s - 2.0).abs() < 1e-9);
+        assert!(s.drift_ppm.unwrap().abs() < 1e-6);
+    }
+
+    #[test]
+    fn zero_frame_packets_do_not_panic() {
+        let zero: Vec<_> = (0..10).map(|i| packet(i * 100_000, 0)).collect();
+        let s = analyze_packets(&zero, 48_000);
+        assert_eq!(s.frames, 0);
+        assert_eq!(s.silent_flag_pct, 0.0);
+        assert_eq!(s.drift_ppm, None);
+        assert_eq!(s.drift_segment_s, 0.0);
+        // Zero frames: every packet is a 10 ms hole relative to the 0 expected.
+        assert!(s.max_jump_ms.is_finite());
+
+        // Zero-frame packets mixed with normal ones, and with extreme timestamps.
+        let mut mixed = vec![packet(i64::MIN, 0), packet(i64::MAX, 0)];
+        mixed.extend((0..300).map(|i| packet(i * 100_000, 480)));
+        mixed.push(packet(i64::MAX, 0));
+        let s = analyze_packets(&mixed, 48_000);
+        assert_eq!(s.frames, 300 * 480);
+        assert!(s.drift_ppm.is_some());
     }
 }
