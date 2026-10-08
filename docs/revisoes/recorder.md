@@ -109,6 +109,19 @@ SHA-256: `1ac633ff0e3e7c2bc2872941f8d8a653cb228788f0bf3f5a072b4cae2ea6c444`.
 A validação visual segue pendente. Próxima informação útil: se a janela colorida apareceu
 no desktop visível do usuário nessa execução.
 
+O usuário confirmou depois que a janela apareceu por cima das demais e que clicou nela.
+Portanto, o diagnóstico do desktop isolado das execuções do GPT não deve ser estendido
+à execução com `!`. O `false` inicial é consultado após apenas 2 s de tentativas; sozinho
+não revela se o clique ocorreu depois ou se a janela ganhou/perdeu foco ao longo do teste.
+
+Para distinguir esses cenários, o roteiro local foi atualizado para iniciar diretamente
+o mesmo executável de teste já compilado e observá-lo via `observe_focus.py` (stdlib Python).
+O observador registra em `focus-observations.json` o desktop do observador, o desktop de
+entrada, o desktop da janela de teste e mudanças no foco a cada 50 ms durante toda a
+execução. Não registra nomes/conteúdo de outros apps nem muda foco, desktop ou entrada.
+A sintaxe Python/PowerShell e o caminho do executável foram conferidos; essa nova
+execução pelo usuário ainda está pendente. Código do gravador e do teste Rust não mudaram.
+
 Esse teste não valida a detecção de um jogo real, o registro do atalho nem as fontes WASAPI
 de jogo/Discord/microfone. Essas partes continuam **não verificadas com hardware**.
 Permanecem os limites já documentados da captura DDA, inclusive sobreposições visíveis.
