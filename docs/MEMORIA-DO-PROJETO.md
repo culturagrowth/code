@@ -323,7 +323,7 @@ Os diagnósticos ficam no crate `crates/duoclip-smoke` (`sysinfo`, `audio_probe`
 ## 7. Como retomar em outro ambiente
 
 ```bash
-git clone https://github.com/nicolaspercio1/duoclip.git && cd code
+git clone https://github.com/nicolaspercio1/duoclip.git && cd duoclip
 git checkout claude/sync-gameplay-clip-app-xpgfwx
 
 # Rust estável (usamos 1.97). No Windows, use o toolchain MSVC padrão.
