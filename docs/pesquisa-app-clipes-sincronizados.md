@@ -38,7 +38,7 @@
 9. [Fluxo completo de um clipe](#9-fluxo-completo-de-um-clipe)
 10. [Rede e armazenamento temporário (bucket)](#10-rede-e-armazenamento-temporário-bucket)
 11. [Editor / pré-visualização](#11-editor--pré-visualização)
-12. [Segurança, privacidade e consentimento](#12-segurança-privacidade-e-consentimento)
+12. [Segurança e privacidade](#12-segurança-e-privacidade)
 13. [Stack tecnológica](#13-stack-tecnológica)
 14. [Distribuição e requisitos mínimos](#14-distribuição-e-requisitos-mínimos)
 15. [Roadmap](#15-roadmap)
@@ -57,8 +57,8 @@
 | **Pós-roll** | **"Fixar e coletar"**: ao apertar, o trecho anterior é fixado no buffer, e o app continua gravando até T + depois + margem antes de fechar o clipe | Esperar e só então salvar não funciona, porque o começo do clipe já teria saído do buffer. O Medal (Game API) e o Overwolf fazem pós-roll desse jeito. |
 | Áudio | WASAPI *process loopback*: jogo e Discord em faixas separadas | Grava só esses dois apps. O OBS e o Medal usam a mesma API. |
 | **Relógio** | **Relógio Global DuoClip** = QPC disciplinado para UTC por um cliente **NTS** próprio (NTP.br + Cloudflare), com refino P2P durante a sessão | Não depende do relógio do Windows, que no PC doméstico sincroniza a cada ~9 h e pode dar saltos. Todos os clipes de todo mundo ficam na mesma linha do tempo. |
-| **Armazenamento temporário** | **Bucket Cloudflare R2** com prefixo por clipe, expiração em ≤ 72 h, URLs assinadas curtas e **criptografia ponta a ponta**. P2P direto como acelerador. | Funciona com o amigo offline ou atrás de CGNAT. Para 1.000 usuários custa **≈ US$ 2–4/mês**, contra US$ 140–220 nos provedores em São Paulo, porque o R2 não cobra download. |
-| Segurança | Sem injeção, sem driver, sem administrador. Consentimento explícito para o amigo disparar a captura. Tudo criptografado. | É requisito do projeto, e também é o que nos diferencia do Medal (que injeta). |
+| **Armazenamento temporário** | **Bucket Cloudflare R2** com prefixo por clipe, expiração em ≤ 72 h, URLs assinadas curtas e **criptografia ponta a ponta**. P2P direto como acelerador. | Funciona com o amigo offline ou atrás de CGNAT. Para um grupo de amigos **cabe no plano gratuito (US$ 0)**. Mesmo com 1.000 usuários custaria ≈ US$ 2–4/mês, porque o R2 não cobra download. |
+| Segurança | Sem injeção nos jogos protegidos por anti-cheat, sem driver, sem administrador. Só amigos pareados disparam clipes. Tudo criptografado. | É requisito do projeto. |
 | Stack | Rust (núcleo) + Tauri 2 (interface) + WebRTC + Cloudflare Worker (credenciais e limpeza) | Desempenho, segurança de memória e backend mínimo. |
 
 ---
@@ -468,11 +468,11 @@ sequenceDiagram
     participant B as App do Amigo (B)
     participant W as Worker (credenciais)
     participant R as Bucket R2
-    Note over A,B: Sessão ativa com consentimento dos dois, relógio global sincronizado
+    Note over A,B: Sessão ativa entre amigos pareados, relógio global sincronizado
     A->>A: Tecla em T (UTC global), fixa o buffer
     A->>B: ClipRequest {clip_id, T, antes 30s, depois 10s, margem 2s}
     B-->>A: ACK 1 (fixado + cobertura esperada)
-    B->>B: Aviso "Você clipou" (B pode vetar)
+    B->>B: Aviso informativo "Fulano clipou"
     Note over A,B: Os dois coletam até T + 10s + 2s e fecham os fragmentos
     B->>W: pede URLs de upload (clip_id)
     W-->>B: URLs PUT assinadas (≤ 15 min, prefixo do clipe)
@@ -491,8 +491,8 @@ sequenceDiagram
 
 ## 10. Rede e armazenamento temporário (bucket)
 
-> **Interpretação adotada:** "bucket" = **armazenamento de objetos na nuvem** (como S3/R2) para trocar os clipes temporários.
-> Os "buckets" **locais** em disco (seção 6.5) complementam a solução. Se a ideia era só a parte local, a seção 6.5 já cobre.
+> **Confirmado:** "bucket" = **armazenamento de objetos na nuvem** para trocar os clipes temporários.
+> Os "buckets" locais em disco (seção 6.5) são só o armazenamento dos clipes em andamento em cada PC.
 
 ### 10.1 Pareamento e conexão
 
@@ -512,7 +512,7 @@ sequenceDiagram
 | CGNAT ou NAT simétrico (comum no Brasil) | ✅ Sem TURN | ⚠️ Precisa de TURN (10–25% das conexões) |
 | Quem envia termina rápido | ✅ | ❌ Depende de quem recebe estar online |
 | Privacidade | ✅ Com criptografia ponta a ponta, o provedor só vê bytes cifrados | ✅ |
-| Custo | ≈ US$ 2–4/mês por 1.000 usuários no R2 | Zero (fora o TURN) |
+| Custo | **US$ 0** para um grupo de amigos (plano gratuito do R2) | Zero (fora o TURN) |
 
 Quando os dois estão online e com caminho direto, a prévia também vai por P2P. Quem recebe pega cada bloco **de quem entregar primeiro**.
 
@@ -527,10 +527,17 @@ Quando os dois estão online e com caminho direto, a prévia também vai por P2P
 | Backblaze B2 | ~US$ 6,95/TB-mês (não reconferido) | Grátis até 3× o armazenado (não reconferido) | ≥ 2 dias | ❌ |
 | Wasabi | Cobrança mínima de 90 dias por objeto (relatado, não reconferido) | — | — | ❌ Não serve para arquivos de horas |
 
-**Estimativa de custo** para 1.000 usuários × 20 clipes/mês, retenção de 72 h:
+**Por POV enviado:** prévia de 44 s × 3 Mbps ≈ 16,5 MB, mais o trecho final de ~16 s × 30 Mbps ≈ 60 MB, ou seja, **≈ 75 MB**.
 
-- **Por POV enviado:** prévia de 44 s × 3 Mbps ≈ 16,5 MB, mais o trecho final de ~16 s × 30 Mbps ≈ 60 MB, ou seja, **≈ 75 MB**.
-- **Volume:** 20.000 × 75 MB = **1,5 TB enviados e 1,5 TB baixados por mês**. Média armazenada: 1.500 GB ÷ 30 × 3 ≈ **150 GB-mês**.
+**Custo para o uso real (grupo de amigos):**
+
+- Exemplo: 5 amigos e 100 clipes por mês no grupo. Cada clipe sobe o POV dos outros 4, ou seja, 4 × 75 MB = 300 MB por clipe.
+- Volume: **30 GB enviados por mês**. Com retenção de 72 h, a média armazenada é 30 ÷ 30 × 3 ≈ **3 GB**.
+- Isso fica dentro do **plano gratuito do R2**: 10 GB-mês de armazenamento, 1 milhão de uploads e 10 milhões de leituras por mês, e download sempre grátis. **Custo: US$ 0.** Mesmo um grupo de 10 amigos clipando muito continua grátis.
+
+**Referência de escala** (se um dia abrir para mais gente): 1.000 usuários × 20 clipes/mês.
+
+- Volume: 20.000 × 75 MB = 1,5 TB enviados e 1,5 TB baixados por mês. Média armazenada ≈ 150 GB-mês.
 
 | Provedor | Cálculo | ≈ Total/mês |
 |---|---|---|
@@ -539,7 +546,7 @@ Quando os dois estão online e com caminho direto, a prévia também vai por P2P
 | GCS São Paulo | 140 GiB × 0,035 + 1.397 GiB × 0,12 + operações | ~US$ 174 |
 | Supabase Pro | 25 + (150 − 100) × 0,0213 + (1.500 − 250) × 0,09 | ~US$ 139 |
 
-O custo é dominado pelo **download**, e o R2 não cobra download. Se **residência dos dados no Brasil** virar exigência (jurídica ou comercial), a opção é S3 sa-east-1 ou Supabase sa-east-1, pagando ~50–100× mais.
+O custo é dominado pelo **download**, e o R2 não cobra download. Por isso o R2 é a escolha. Os provedores com servidor em São Paulo só valeriam a pena se fosse obrigatório manter os dados no Brasil.
 
 ### 10.4 Expiração automática
 
@@ -561,7 +568,7 @@ Nenhum provedor apaga **por hora** de forma nativa. Por isso:
 
 - Cada clipe tem uma **chave aleatória de 256 bits**. Cada bloco é cifrado com **AES-256-GCM**, com *nonce* único (prefixo aleatório + contador) e AAD = `clip_id|pov|qualidade|índice|é_último`. A AAD impede trocar, reordenar ou truncar blocos.
   - Alternativa pronta: libsodium `secretstream`.
-- A chave vai **só para o amigo pareado**, pelo canal autenticado. A Cloudflare só armazena bytes cifrados, o que também reduz muito o risco perante a LGPD.
+- A chave vai **só para o amigo pareado**, pelo canal autenticado. A Cloudflare só armazena bytes cifrados.
 
 ### 10.7 Uma única unidade de transferência (P2P e bucket)
 
@@ -594,19 +601,18 @@ clips/{pair_id}/{clip_id}/{pov}/manifest.bin   ← cifrado: bloco → faixa de t
 
 ---
 
-## 12. Segurança, privacidade e consentimento
+## 12. Segurança e privacidade
 
 | Área | Medida |
 |---|---|
 | **Anti-cheat** | Nenhuma injeção de DLL, driver ou leitura de memória do jogo. Mapear **todas** as chamadas que tocam o processo ou a janela do jogo (meta: nenhum handle além de `PROCESS_QUERY_LIMITED_INFORMATION`). Testar com uma build assinada em Vanguard, EAC, BattlEye, FACEIT e **Gamers Club AC**, e abrir contato com FACEIT e Gamers Club. |
 | **Atalho** | `RegisterHotKey`, com o QPC registrado no `WM_HOTKEY`, mais Raw Input e XInput para controle. **Evitar hooks globais de teclado** (`WH_KEYBOARD_LL`), que parecem keylogger. Segundo análise de terceiros, o Medal usa `SetWindowsHookEx` para atalhos. |
-| **Consentimento para captura remota** | Ninguém dispara a gravação do PC de outra pessoa sem consentimento: (1) **opt-in por sessão** ("compartilhar meu POV com esta party"); (2) **aviso visível** a cada clipe disparado por outro; (3) **janela para vetar** (~15 s) antes do envio, ou "aprovar sempre" para cada amigo; (4) **nunca enviar automaticamente** imagens da captura de monitor; (5) só amigos pareados mutuamente e numa sessão autenticada; (6) registro nos dois PCs. |
+| **Quem pode disparar clipes** | Só amigos **pareados entre si** e numa sessão "jogar juntos" ativa. O pareamento já vale como autorização, então não há tela de aprovação. Cada PC mostra um aviso informativo ("Fulano clipou") e registra o histórico. |
 | **Escopo** | Só a janela do jogo e só o áudio do jogo e do Discord. Respeitar janelas protegidas. |
 | **Dados** | Buffer só na RAM. Buckets locais criptografados e apagados. Bucket na nuvem cifrado de ponta a ponta, com expiração ≤ 72 h e botão "apagar meus clipes agora". |
 | **Rede** | DTLS no WebRTC, chaves fixadas, URLs assinadas curtas, cotas, schema rígido de mensagens e *fuzzing*. |
 | **Código** | Rust no núcleo. FFmpeg LGPL atualizado. **Não copiar código do OBS** (GPL): reimplementar os padrões. |
-| **LGPD** | O R2 fica fora do Brasil, o que é **transferência internacional** (Art. 33). É preciso política de privacidade e base legal, e confirmar as cláusulas-padrão da ANPD com um advogado. Também é preciso consentimento para gravar vozes. |
-| **ECA Digital** (Lei 15.211/2025, em vigor desde 17/03/2026) | Vale para produtos digitais de **acesso provável por menores**, e gamers incluem muitos adolescentes. Exige configurações padrão no nível mais protetivo, possível verificação de idade e ferramentas parentais. **Revisar com um advogado** antes de lançar. Considerar um "modo menor" (sem nuvem) ou idade mínima. |
+| **Jurídico** | Uso privado entre amigos, então não há exigências adicionais neste plano. Se um dia o app for aberto ao público, revisar LGPD e ECA Digital (Lei 15.211/2025) antes. |
 
 ---
 
@@ -626,7 +632,7 @@ duoclip/
 ├─ core/            # Rust: WGC, WASAPI, encoder, ring buffer, pós-roll, buckets locais
 ├─ clock/           # Rust: AppClock (QPC + NTS + P2P), estimador, metadados
 ├─ net/             # Rust: pareamento, WebRTC, protocolo de clipes, upload/download cifrado
-├─ app/             # Tauri 2: bandeja, configurações, consentimento, editor
+├─ app/             # Tauri 2: bandeja, configurações, amigos, editor
 ├─ worker/          # Cloudflare Worker: auth, presign, signaling, cron de expiração
 └─ tools/sync-test/ # utilitário do "teste do flash"
 ```
@@ -654,10 +660,10 @@ duoclip/
 |---|---|---|
 | **0 — Provas de conceito** | (a) WGC → NVENC/AMF/QSV, com **benchmark PresentMon** contra a captura do monitor; (b) process loopback do jogo e do Discord; (c) **teste da borda** (sem pacote, configuração do Win11, MSIX); (d) protótipo do AppClock com NTS | FPS < 5% de perda. Borda resolvida no Win11. AppClock ≤ 8 ms contra o NTP.br. |
 | **1 — Clipador local** | Bandeja, ring buffer, **pós-roll "fixar e coletar"**, buckets locais fMP4, faixas separadas | Clipe pronto ≤ 1 s após o fim do pós-roll. Sobrevive a um crash. |
-| **2 — Relógio global + dupla** | NTS + P2P híbrido, estados, indicador "±X ms", pareamento, consentimento | Teste do flash ≤ 1 frame (P95) em fibra |
+| **2 — Relógio global + dupla** | NTS + P2P híbrido, estados, indicador "±X ms", pareamento de amigos | Teste do flash ≤ 1 frame (P95) em fibra |
 | **3 — Clipe remoto + bucket** | `ClipRequest`, Worker, R2, criptografia de ponta a ponta, prévia, expiração | Do aperto até a prévia aberta < 20 s com 20 Mbps de upload |
 | **4 — Editor e exportação** | Layouts, mixer, ajuste fino, exportação por hardware | Exportação de 15 s < 10 s numa GPU média |
-| **5 — Produto** | MSIX/Store, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), revisão LGPD e ECA Digital, grupos de 3–5 | Publicado |
+| **5 — Produto** | MSIX/Store, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), grupos de 3–5 | Publicado |
 
 ---
 
@@ -673,8 +679,6 @@ duoclip/
 | Assimetria de rota piorar a sincronia | Média | Médio | Pacotes de menor RTT, regressão de dois lados, ajuste fino no editor |
 | Pós-roll perder o começo do clipe | — | Alto | Mecanismo "fixar e coletar" desde o pedido |
 | Upload atrapalhar o ping | Média | Alto | Limitador, prévia primeiro, "enviar ao fim da partida" |
-| R2 fora do Brasil (LGPD) | Alta | Médio | Criptografia de ponta a ponta, transparência, opção S3 São Paulo |
-| ECA Digital / menores | Média | Alto | Revisão jurídica, padrões protetivos, modo sem nuvem |
 | GPU sem encoder | Baixa | Médio | GPU integrada ou x264 720p30 com aviso |
 | Medal mudar para WGC por padrão | Média | Baixo | O diferencial do DuoClip é a sincronia entre POVs, não o método de captura |
 
@@ -700,9 +704,8 @@ duoclip/
 - [R2: preços](https://developers.cloudflare.com/r2/pricing/) · [R2: ciclo de vida](https://developers.cloudflare.com/r2/buckets/object-lifecycles/) · [R2: local de dados](https://developers.cloudflare.com/r2/reference/data-location/) · [R2: Local Uploads](https://developers.cloudflare.com/r2/buckets/local-uploads/) · [R2: URLs pré-assinadas](https://developers.cloudflare.com/r2/api/s3/presigned-urls/) · [R2: credenciais temporárias](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) · [R2: limites de upload](https://developers.cloudflare.com/r2/objects/upload-objects/)
 - [AWS S3 sa-east-1 (Price List API)](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/sa-east-1/index.json) · [AWS Data Transfer sa-east-1](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSDataTransfer/current/sa-east-1/index.json) · [S3 lifecycle](https://github.com/awsdocs/amazon-s3-developer-guide/blob/master/doc_source/intro-lifecycle-rules.md) · [GCS: preços](https://cloud.google.com/storage/pricing) · [GCS: soft delete](https://docs.cloud.google.com/storage/docs/soft-delete) · [Supabase: preços](https://supabase.com/pricing) · [Supabase: lifecycle (só noncurrent)](https://github.com/supabase/supabase-js/blob/master/packages/core/storage-js/src/packages/StorageBucketApi.ts) · [Supabase: uploads resumíveis](https://supabase.com/docs/guides/storage/uploads/resumable-uploads) · [Supabase: controle de acesso](https://supabase.com/docs/guides/storage/security/access-control) · [Backblaze B2](https://www.backblaze.com/cloud-storage/pricing) · [Wasabi](https://wasabi.com/pricing)
 
-**Windows, mercado e legislação**
+**Windows e mercado**
 - [Windows 10 ESU estendido até 12/10/2027 (Help Net Security)](https://www.helpnetsecurity.com/2026/06/26/microsoft-windows-10-free-security-updates-esu-program/) · [StatCounter: versões do Windows no Brasil](https://gs.statcounter.com/windows-version-market-share/desktop/brazil) · [RX 6500 XT sem encoder (TechSpot)](https://www.techspot.com/news/93070-amd-admits-navi-24-gpu-used-radeon-rx.html) · [GT 1030 sem NVENC (fórum OBS)](https://obsproject.com/forum/threads/no-nvenc-option-with-gt-1030-card.68836/latest)
-- [ECA Digital em vigor em 17/03/2026 (Machado Meyer)](https://www.machadomeyer.com.br/pt/inteligencia-juridica/publicacoes-ij/direito-digital/estatuto-digital-da-crianca-e-do-adolescente-lei-n-15-211-2025-entra-em-vigor-em-17-de-marco-de-2026) · [ECA Digital e jogos (UFJF)](https://www2.ufjf.br/inovagames/2026/04/13/eca-digital-e-marco-legal-dos-games-o-que-muda-na-legalidade-dos-jogos-no-brasil/) · [Mayer Brown: novas obrigações](https://www.mayerbrown.com/pt/insights/publications/2026/04/enforcement-of-brazils-eca-digital-introduces-new-obligations-for-companies) · [LGPD (Lei 13.709/2018)](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)
 - Da versão 1: [Store gratuita para pessoa física](https://blogs.windows.com/windowsdeveloper/2025/09/10/free-developer-registration-for-individual-developers-on-microsoft-store/) · [Artifact Signing FAQ](https://learn.microsoft.com/azure/trusted-signing/faq) · [libdatachannel](https://github.com/achingbrain/libdatachannel/blob/master/README.md) · [OpenVidu: TURN](https://openvidu.io/blog/2026/06/09/turn-key-considerations/) · [web.dev: requestVideoFrameCallback](https://web.dev/articles/requestvideoframecallback-rvfc?hl=pt-br) · [MultiView Sync Player](https://apps.microsoft.com/detail/9p6r3kvkjzlb?hl=en-US&gl=US) · [VOD Review](https://vodreview.app/)
 
 > **Confiabilidade:**
