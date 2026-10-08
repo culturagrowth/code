@@ -20,7 +20,7 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 7 | Rodar `audio_probe --capture` num Windows 10 19045 de um amigo, e com `--game-exe` | B1 | — | Usuário | livre | — | |
 | 8 | Instalar o PresentMon e medir o impacto do Desktop Duplication (e do Medal, se houver) | B2 | — | Usuário | livre | — | Instalar exige confirmação |
 | 9 | `duoclip-capture`: backend `dda_crop` (Desktop Duplication recortado, rotação e HDR) + stub do WGC e do hook | B2 | `crates/duoclip-capture` (novo) | — | livre | — | Precisa de SPEC antes (Claude pode escrever) |
-| 10 | Worker: presença por grupo (`POST /v1/presence` com heartbeat e `GET /v1/crews/:crew/presence`) para alimentar a sessão | C | `worker/` | GPT | em andamento | `gpt/worker-presenca` | Heartbeat autenticado, expiração, isolamento por grupo e testes com SQL real; worktree separado do Claude |
+| 10 | Worker: presença por grupo (`POST /v1/presence` com heartbeat e `GET /v1/crews/:crew/presence`) para alimentar a sessão | C | `worker/` | GPT | em revisão | `gpt/worker-presenca` | Heartbeat autenticado, TTL de 30 s, isolamento entre grupos e migração 0003; 355 testes Worker; entrega local, push pendente por falta de conexão |
 | 11 | `rust-toolchain.toml` para fixar a versão do Rust | — | raiz | — | livre | — | Decisão do usuário (lints novos quebram o `-D warnings`) |
 
 ## Concluídas

@@ -292,6 +292,24 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 
 ### Em andamento / pendente
 
+**Entrega do GPT em 08/10/2026 — tarefa 10, aguardando revisão do Claude:**
+
+- Branch local `gpt/worker-presenca`, criada da integração `41fac5f`, em worktree separado:
+  `C:\Users\bolad\Projetos\duoclip-gpt-worker-presenca`. As alterações do Claude no diretório principal foram preservadas.
+- Worker: `POST /v1/presence` autenticado e `GET /v1/crews/:crew/presence` restrito a membros; migração
+  `0003_presence.sql`, com um anúncio por dispositivo, independente da quantidade de grupos.
+- Contrato detalhado em `worker/SPEC.md`: validade de 30 s pelo recebimento no Worker, heartbeat sugerido a cada 10 s,
+  sequência crescente enquanto válido e reinício aceito depois da expiração. Membros ativos em outro grupo são omitidos;
+  o Worker não revela o UUID de outro grupo e não limita a consulta a oito membros (a seleção é do cliente de sessão).
+- Payload compatível com os campos do SPEC de `duoclip-session` em elaboração pelo Claude: `game`, `active_crew`,
+  `seq`, `online_since_ms`; `device_id` da resposta vira `Presence.device`. Inteiros JSON limitados a 9007199254740991.
+  Cada GET é um retrato completo: o adapter nativo ainda precisa tratar ausências e sequências repetidas.
+- Worker validado com `npm run typecheck` e **355 testes passando** (43 novos); testes com SQL real, sem rede.
+  Rust: **374 testes passando, 4 ignorados**, formatação e Clippy limpos; `cargo check --workspace --all-targets
+  --target x86_64-pc-windows-gnu` também passou.
+- Nenhum deploy ou migração remota foi executado. O push não conseguiu conectar ao GitHub neste ambiente;
+  a branch e os commits estão disponíveis localmente para revisão. A integração continua sob responsabilidade do Claude.
+
 1. **Terminar a B1:**
    - revisar o gamesdb;
    - terminar e revisar mux e áudio;
