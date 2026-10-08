@@ -1,6 +1,6 @@
 # Validação da configuração Cloudflare — 08/10/2026
 
-Branch: `gpt/worker-r2`. Tarefa 13, implementada pelo GPT e aguardando validação remota e revisão do Claude.
+Branch: `gpt/worker-r2`. Tarefa 13, implementada pelo GPT, validada no R2 real pelo usuário e aguardando revisão do Claude.
 
 ## Resultado
 
@@ -8,9 +8,33 @@ Branch: `gpt/worker-r2`. Tarefa 13, implementada pelo GPT e aguardando validaç�
 - Account ID, nome do bucket e Database ID estão com formato válido. Isso não comprova existência ou autorização na Cloudflare.
 - Os identificadores não secretos foram configurados no `wrangler.toml` desta branch. Nenhuma credencial foi copiada ou commitada.
 - 321 testes locais do Worker (9 novos) passaram; typecheck, formatação, Clippy, 374 testes Rust (4 ignorados) e check Windows GNU passaram.
-- O acesso real ao R2 falhou com `EACCES` antes de receber resposta HTTP, tanto na consulta inicial quanto no novo teste completo.
-  Nenhum objeto foi criado; não houve upload/download remoto. A validade das chaves e o comportamento do R2 continuam não verificados.
+- As tentativas do GPT foram bloqueadas pelo sandbox com `EACCES` antes da primeira resposta HTTP.
+  Depois, o usuário executou o teste no terminal habitual e compartilhou o resultado abaixo: upload e download íntegro,
+  rejeição do tamanho incorreto e remoção confirmada passaram no R2 real. A execução remota foi feita pelo usuário.
+- O Wrangler local informou que não há autenticação administrativa. As chaves S3 usadas no teste não autenticam o Wrangler.
 - O Worker não foi publicado, e nenhuma migração foi aplicada ao D1 remoto.
+
+## Evidência fornecida pelo usuário
+
+Resultado recebido em 08/10/2026:
+
+```json
+{
+  "ok": true,
+  "checks": [
+    { "step": "check_absent", "status": 404 },
+    { "step": "upload", "status": 200 },
+    { "step": "download", "status": 200 },
+    { "step": "reject_wrong_length", "status": 403 },
+    { "step": "delete", "status": 204 },
+    { "step": "check_deleted", "status": 404 }
+  ],
+  "cleanup": "done"
+}
+```
+
+O teste cobre o presigner e o acesso S3 ao bucket configurado com um objeto sintético cifrado.
+A autenticação Ed25519 das rotas, os bindings de um Worker publicado e o D1 remoto não são exercitados por este comando.
 
 ## Executar o teste no terminal do PC
 
@@ -28,5 +52,12 @@ Só o objeto temporário gerado pelo teste pode ser apagado; nenhum clipe existe
 Resultado esperado: `ok: true`, `cleanup: "done"`, seis etapas com status `404, 200, 200, 403, 204, 404`.
 Uma falha de limpeza informa `object_key` para remover exatamente esse objeto pelo painel. O processo sai com código diferente de zero em falhas.
 
-A saída omite chaves, cabeçalhos, URLs assinadas e corpos de erro. Compartilhe apenas esse resultado para continuarmos a validação.
-O próximo passo depois do sucesso é verificar a autenticação do Wrangler, o D1 e suas migrações, e preparar a publicação do Worker.
+A saída omite chaves, cabeçalhos, URLs assinadas e corpos de erro.
+O próximo passo é autenticar o Wrangler no terminal habitual e consultar o D1 configurado:
+
+```powershell
+npx.cmd wrangler login
+npx.cmd wrangler d1 info duoclip
+```
+
+A aplicação das migrações e a publicação do Worker continuam pendentes.

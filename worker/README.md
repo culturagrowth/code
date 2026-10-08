@@ -382,10 +382,9 @@ podem ser aumentados em `src/sweep.ts`.
   apps; a chave do clipe nunca passa pelo Worker.
 - **Cotas por tamanho assinado:** `Content-Type` e `Content-Length` entram na assinatura das URLs de upload, então cada
   objeto tem exatamente o tamanho cobrado, inclusive o `manifest.bin`. Uma URL de upload sem tamanho nunca é emitida.
-  Isso foi conferido contra uma implementação independente do SigV4 nos testes, mas **não** contra o R2 real (não há
-  credenciais nos testes). Se o R2 recusar o `Content-Length` assinado, o sintoma é `403 SignatureDoesNotMatch` em todo
-  upload; nesse caso a regra de ciclo de vida de 3 dias continua limitando o dano, e a assinatura do tamanho pode ser
-  retirada em `src/presign.ts` (voltando ao risco de um membro enviar mais bytes do que anunciou).
+  Isso foi conferido contra uma implementação independente do SigV4 nos testes locais e no R2 real pelo usuário em
+  08/10/2026: tamanho correto aceito, conteúdo baixado íntegro, tamanho incorreto recusado e objeto temporário removido.
+  A evidência está em [`R2-VALIDACAO.md`](R2-VALIDACAO.md). Os testes automáticos locais continuam sem credenciais.
 - **Cadastro aberto e disjuntores:** `POST /v1/devices` é aberto por projeto, então qualquer pessoa que descubra o
   endereço poderia criar dispositivos e, com eles, cota própria. Os disjuntores (cadastros por dia, bytes por dia no
   serviço todo, crews, convites, clipes) limitam o custo no pior caso. O outro lado da moeda: alguém que consiga

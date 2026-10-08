@@ -111,7 +111,7 @@ All uuids are lowercase and hyphenated.
   deployed Workers are modified. Credentials, request headers, signed URLs and raw error bodies are never logged.
 - The JSON result reports steps/statuses, success and cleanup. A failed cleanup includes only the random object key
   for manual removal. Exit code is nonzero for configuration, network, protocol, data-integrity or cleanup failures.
-- Real R2 remains unverified until this opt-in command succeeds. D1's id in the local file is configuration metadata;
+- Real R2 verification requires a successful opt-in run. D1's id in the local file is configuration metadata;
   it does not supply Cloudflare administration authentication or prove that remote migrations have been applied.
 
 ## Implementation notes (accepted deviations, Phase A review) — the Rust client MUST follow these
@@ -131,14 +131,15 @@ All uuids are lowercase and hyphenated.
   - 413 `chunk_too_large`/`clip_quota_exceeded`, 429 `daily_quota_exceeded` with `Retry-After`;
   - 401 with a `reason`.
 - The Ed25519 verification is strict (non-malleable). Invite codes are normalized ASCII-only. The client signs the WHATWG-serialized `pathname + search`.
-- Tests need Node ≥ 22.13 (`node:sqlite`, WebCrypto Ed25519). R2 presigning was validated against an independent SigV4 implementation and
-  `wrangler dev`, **not against real R2** (no credentials yet).
+- Tests need Node ≥ 22.13 (`node:sqlite`, WebCrypto Ed25519). Phase A validated R2 presigning against an independent SigV4 implementation and
+  `wrangler dev`. Task 13 additionally verified PUT/GET, signed-length rejection and cleanup against real R2; see below.
 - Recommended after the friends register: Cloudflare rate-limiting rules on `POST /v1/devices` and `POST /v1/crews/join`, and possibly closing
   registration. Any crew member can delete any clip (per SPEC), and there is no member removal yet.
 
-## Implementation notes (task 13, awaiting cross-review and real R2 verification)
+## Implementation notes (task 13, awaiting cross-review)
 
 - The opt-in probe uses existing dependencies and does not change production routes, quotas or presigning rules.
   Nine offline tests cover the probe's control flow, exact headers, cleanup, redaction and negative length check.
-- Actual network access failed before any HTTP response with `EACCES`; no real object was created. See `R2-VALIDACAO.md`.
-  Non-secret R2/D1 identifiers are configured, but no Worker deployment or remote D1 migrations were performed.
+- The user ran the real R2 probe successfully on 2026-10-08 and supplied the six expected statuses with cleanup completed.
+  The GPT sandbox's earlier attempts were blocked with `EACCES`. See `R2-VALIDACAO.md` for the user-supplied evidence.
+  Non-secret R2/D1 identifiers are configured. Wrangler authentication, Worker deployment and remote D1 migrations remain pending.
