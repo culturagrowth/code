@@ -6,6 +6,7 @@
 >
 > - Repositório: `nicolaspercio1/duoclip` (antes `culturagrowth/code`, apagado em 08/10/2026) · branch de trabalho: `claude/sync-gameplay-clip-app-xpgfwx`
 > - Idioma de trabalho: **português do Brasil**. O código e os comentários ficam em inglês.
+> - **Regras para qualquer IA:** [`AGENTS.md`](../AGENTS.md) · **quem faz o quê:** [`docs/TAREFAS.md`](TAREFAS.md)
 > - Documentos principais:
 >   - [`docs/pesquisa-app-clipes-sincronizados.md`](pesquisa-app-clipes-sincronizados.md): pesquisa e arquitetura completas;
 >   - [`docs/anexo-metodos-de-captura-obs-medal.md`](anexo-metodos-de-captura-obs-medal.md): evidências de como OBS e Medal capturam;
@@ -47,6 +48,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 | 14 | "Pode atualizar tudo da memória de novo, agora que acabou de aplicar" | Memória, documentos e anexo atualizados com a Fase B1 parcial e a pesquisa da rodada 3. Pesquisas brutas e scripts dos agentes guardados no repositório. |
 | 15 | "Crie também um prompt para eu mandar para o meu Claude Code no CLI para puxar tudo e realizar o teste do app" | [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](PROMPT-CLAUDE-CODE-LOCAL.md) |
 | 16 | "Quero que funcione com quantos amigos eu quiser jogando junto; tenho 2 grupos diferentes, jogo com um num dia e com o outro no outro; às vezes 6, às vezes 3; sem um interferir no outro" | **Grupos e sessões** (4.7): vários grupos isolados, **sessão automática** e sessões de **até 8 pessoas** |
+| 17 | "Tenho outra IA (GPT 6.1 SOL) e quero delegar tarefas para ela também; deixe tudo adaptável para usar as duas" | Regras neutras em [`AGENTS.md`](../AGENTS.md) (o `CLAUDE.md` importa); quadro [`docs/TAREFAS.md`](TAREFAS.md) com dono e branch por tarefa (`claude/…`, `gpt/…`); modelo [`docs/PROMPT-DELEGAR-TAREFA.md`](PROMPT-DELEGAR-TAREFA.md); revisão cruzada antes do merge |
 
 ## 3. Preferências do usuário
 

@@ -8,6 +8,8 @@ Os clipes são trocados por um **bucket na nuvem (Cloudflare R2)**, sempre cript
 - Como OBS, Medal e outros capturam a tela: [`docs/anexo-metodos-de-captura-obs-medal.md`](docs/anexo-metodos-de-captura-obs-medal.md)
 - Memória do projeto (decisões, estado, próximos passos): [`docs/MEMORIA-DO-PROJETO.md`](docs/MEMORIA-DO-PROJETO.md)
 - **Testar no seu PC com o Claude Code:** [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](docs/PROMPT-CLAUDE-CODE-LOCAL.md)
+- **Regras para qualquer IA (Claude, GPT...):** [`AGENTS.md`](AGENTS.md) · quadro de tarefas: [`docs/TAREFAS.md`](docs/TAREFAS.md) ·
+  como delegar: [`docs/PROMPT-DELEGAR-TAREFA.md`](docs/PROMPT-DELEGAR-TAREFA.md)
 
 ## Estrutura
 

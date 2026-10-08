@@ -1,5 +1,7 @@
 # Workflows de agentes (Claude Code)
 
+> Só funcionam no Claude Code. Outras IAs devem seguir o [`AGENTS.md`](../../AGENTS.md) e o [`docs/TAREFAS.md`](../../docs/TAREFAS.md).
+
 Scripts da ferramenta **Workflow** do Claude Code usados para pesquisar e implementar o DuoClip.
 Eles servem para refazer ou continuar o trabalho em outro ambiente. Os prompts têm as regras de cada etapa.
 
