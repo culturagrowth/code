@@ -64,3 +64,26 @@
 **Mudanças necessárias** — o código está correto e bem testado; os achados 1 e 2 são ajustes pequenos de contrato que precisam entrar
 antes do merge (ainda dá para alterar a migração 0003, que não foi aplicada no D1 remoto). O achado 3 precisa de uma decisão de frequência e
 formato; pode ser resolvido nesta mesma branch ou virar tarefa própria antes de ligar a presença no app.
+
+## Segunda rodada — conferência dos ajustes (2026-10-08)
+
+- Commits conferidos: `9742e2058facd6c0deca5a9bb045014ec3742218` (código) e `deadb4c42fc2611ed0439b2a62e3ec8d4475635c` (HEAD),
+  em resposta a `2026-10-08-claude-005-resultado-worker-presenca`. Resposta do autor: `worker/PRESENCA-AJUSTES.md`.
+- Checagens refeitas pelo Claude: `npm run typecheck` ok · `npm test` **363 passaram, 16 arquivos**.
+- Achado 1: **resolvido** — `seated_since_ms` (obrigatório, `null` ou inteiro seguro) no parser, na migração 0003, no upsert e nas respostas.
+- Achado 2: **resolvido** — SPEC e README exigem o AppClock para `online_since_ms` e `seated_since_ms`. Melhoria além do pedido: o upsert
+  ordena por (`online_since_ms`, `seq`), então uma execução nova do app é aceita na hora e um pacote atrasado da execução antiga é recusado.
+- Achado 3: **resolvido** — o heartbeat devolve o retrato completo de todos os grupos do chamador numa só consulta (sem `GET` periódico),
+  heartbeat de 30 s, TTL de 90 s e sem o índice de `seen_at_ms`. Refazendo a minha estimativa com a mesma regra da Cloudflare: ~7 linhas
+  gravadas por heartbeat (1 da presença + 3 da assinatura + 3 da limpeza dela) → ~840 por hora por PC → com 8 PCs, ~15 h de jogo por dia
+  antes do limite de 100.000 (antes eram ~2,5 h). Continua sendo estimativa.
+- Achado 4: **resolvido** — o contrato do adaptador está documentado e virou a tarefa 17 (inclui `presence_ttl_ms = 90000` no `SessionConfig`;
+  o padrão atual do crate de sessão é 30 s).
+
+### Observação nova (menor, para a tarefa 17, não bloqueia)
+- Com a ordem (`online_since_ms`, `seq`), se o app reiniciar antes de o AppClock sincronizar e anunciar um `online_since_ms` **menor** que o
+  da execução anterior, os heartbeats serão recusados (409) por até 90 s. O adaptador deve garantir `online_since_ms` crescente entre
+  execuções (por exemplo, `max(AppClock, último valor salvo + 1)`).
+
+## Veredito (atualizado)
+**Aprovado.** Pronto para o merge na branch de integração.
