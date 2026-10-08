@@ -102,6 +102,11 @@ impl SessionManager {
     /// my crews, game ids longer than 64 bytes, announcements not newer than the stored one while it is fresh.
     /// Keeps at most 256 tracked devices (oldest seen evicted).
     pub fn on_presence(&mut self, p: Presence, now_ms: u64) -> bool;
+    /// Applies a complete Worker snapshot (every fresh and available member of ALL my crews, merged). Authoritative for
+    /// departures: tracked devices absent from it are forgotten at once (participants become `Left` at the next tick).
+    /// Listed devices follow the `on_presence` rules, but a repeated `(online_since_ms, seq)` pair never refreshes
+    /// freshness. My own device is ignored. Takes effect at the next tick. Returns counts for diagnostics.
+    pub fn apply_snapshot(&mut self, members: Vec<Presence>, now_ms: u64) -> SnapshotOutcome;
     /// User picks a crew in NeedsChoice (or switches explicitly). Error if the crew is not one of mine, there is no local game,
     /// or the crew has no candidate.
     pub fn choose_crew(&mut self, crew: CrewId, now_ms: u64) -> Result<(), SessionError>;
@@ -121,6 +126,11 @@ impl SessionManager {
     pub fn set_remembered_choices(&mut self, choices: BTreeMap<String, CrewId>);
     pub fn tracked_devices(&self) -> usize;
 }
+```
+
+```rust
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SnapshotOutcome { pub accepted: usize, pub stale: usize, pub ignored: usize, pub forgotten: usize }
 ```
 
 Types `DeviceId`, `CrewId`, `RejectReason` come from `duoclip-proto`. `SessionError`: `TtlTooShort`, `InvalidMaxSize`,
@@ -161,6 +171,12 @@ and drop replays: this crate only orders them (see Implementation notes).
   members, random game changes / restarts / choices, `max_size` 2, 3 and 8. After a few quiet rounds: if A lists B, B lists A in the
   same crew and both accept each other's requests; fellow participants agree on the seat set; no device is a participant under two
   crews; queued devices are in everyone's queue and nobody's participants.
+  The same scenarios also run with managers fed **only** Worker-style snapshots (`apply_snapshot`) through an in-memory fake
+  Worker (receipt-time freshness with TTL 90 s, lexicographic `(online_since_ms, seq)` acceptance with 409, per-crew
+  availability filter, complete snapshots of all the caller's crews), both every round and at the real 30 s cadence.
+- `apply_snapshot` (`tests/snapshot.rs`): departures forgotten immediately (participant → `Left`), a repeated pair does not
+  refresh freshness, my own device ignored, devices present in another crew's snapshot are kept, empty snapshot forgets everyone,
+  the local TTL still expires peers when snapshots stop; the property test also mixes random snapshots in.
 
 ## Implementation notes
 
@@ -227,3 +243,22 @@ participant, cap and ordering rules; the reasons are kept here).
 - **Spec arithmetic.** The first version said "12 candidates → me + 7, overflow 4"; 12 candidates give an overflow of **5**
   (fixed above). The tests cover 11 candidates (overflow 4) and 12 candidates (overflow 5).
 - **Dev-dependency.** `uuid` (already in the workspace) is a dev-dependency only, to build deterministic ids in tests.
+- **`apply_snapshot` (task 17).** Added for the Worker transport (`duoclip-presence`). Details:
+  - A device listed several times (once per shared crew) counts once, with its greatest `(online_since_ms, seq)` pair.
+  - A pair *equal* to the stored one never refreshes freshness, even if the stored one already expired locally (the Worker
+    returns a row unchanged until it expires; only a newer pair proves a new heartbeat). An *older* pair follows `on_presence`:
+    stale while the stored one is fresh, accepted once it expired (the Worker itself accepts any pair after expiry).
+  - Entries with an oversized game id are ignored **and do not count as present** (the device is forgotten): an entry that
+    cannot be used is treated as absent, which keeps clips away from a device whose state is unknown. Non-members and my
+    own device are ignored (`ignored` counts entries; `accepted`/`stale` count distinct devices).
+  - Members committed to a crew I am not in are omitted by the Worker's availability filter, so they are forgotten: they could
+    never be my candidates anyway. Consequence for the anti-livelock rule: "rivals" are only visible when I am also in their
+    crew (true in the two-sided swap it targets, where both devices are in both crews).
+  - With snapshots arriving one device at a time, two crews that come online in the same second may be seen one after the
+    other, so a device can commit to the first instead of getting `NeedsChoice` (a `NeedsChoice` needs both crews in the
+    first snapshot, e.g. when I open the game after both crews are playing). Agreement holds after a quiet period: the Worker
+    scenarios of `tests/agreement.rs` check the invariants once nothing happened (no event, no change announcement) for a whole
+    heartbeat interval plus one round, because a transition may be half-propagated at an arbitrary instant.
+  - Transport contract with the Worker: `presence_ttl_ms` = 90 000 and a heartbeat every 30 s plus immediate change
+    announcements; `switch_grace_ms` must outlast the information delay (`duoclip-presence` raises it to 65 s; with the default
+    10 s a friend's quick game restart can end the session, see that crate's notes).

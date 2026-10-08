@@ -196,6 +196,20 @@ pub enum SessionEvent {
     },
 }
 
+/// What [`SessionManager::apply_snapshot`] did with a snapshot (for diagnostics).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SnapshotOutcome {
+    /// Distinct devices whose presence was recorded (newer run/sequence pair).
+    pub accepted: usize,
+    /// Distinct devices listed with a pair that is not newer than the stored one (kept as they
+    /// were: a repeated pair never refreshes freshness).
+    pub stale: usize,
+    /// Entries ignored: my own device, devices in none of my crews, oversized game ids.
+    pub ignored: usize,
+    /// Tracked devices absent from the snapshot, forgotten immediately.
+    pub forgotten: usize,
+}
+
 /// The last presence received from a peer, stamped with the receiver's clock.
 #[derive(Clone, Debug)]
 struct Peer {
@@ -324,6 +338,58 @@ impl SessionManager {
             },
         );
         true
+    }
+
+    /// Applies a complete presence snapshot (the Worker's `POST /v1/presence` response: every
+    /// fresh and available member of ALL my crews, merged into one list), stamped with `now_ms`.
+    /// Takes effect at the next tick, like [`on_presence`](Self::on_presence).
+    ///
+    /// The snapshot is authoritative for departures: every tracked device absent from it (and
+    /// not me) is forgotten at once, so a participant becomes `Left` on the next tick instead of
+    /// waiting for the local TTL. Listed devices go through the `on_presence` rules, except
+    /// that a pair `(online_since_ms, seq)` equal to the stored one never refreshes freshness
+    /// (the Worker repeats a row until it expires; only a newer pair proves a new heartbeat).
+    /// A device listed several times (one entry per shared crew) counts once, with its greatest
+    /// pair. Entries with oversized game ids are ignored and do not count as present. The local
+    /// TTL keeps expiring peers when snapshots stop arriving.
+    pub fn apply_snapshot(&mut self, members: Vec<Presence>, now_ms: u64) -> SnapshotOutcome {
+        let now = self.advance(now_ms);
+        let mut outcome = SnapshotOutcome::default();
+        let mut latest: BTreeMap<DeviceId, Presence> = BTreeMap::new();
+        for p in members {
+            let oversized = p.game.as_ref().is_some_and(|g| g.len() > MAX_GAME_ID_BYTES);
+            if p.device == self.me || oversized {
+                outcome.ignored = outcome.ignored.saturating_add(1);
+                continue;
+            }
+            match latest.get(&p.device) {
+                Some(kept) if (p.online_since_ms, p.seq) <= (kept.online_since_ms, kept.seq) => {}
+                _ => {
+                    latest.insert(p.device, p);
+                }
+            }
+        }
+
+        // Departures: whoever is not listed has left (or is busy in a crew I am not in).
+        let before = self.peers.len();
+        self.peers.retain(|device, _| latest.contains_key(device));
+        outcome.forgotten = before - self.peers.len();
+
+        for (device, p) in latest {
+            if !self.is_member_of_any(&device) {
+                outcome.ignored = outcome.ignored.saturating_add(1);
+                continue;
+            }
+            let repeated = self.peers.get(&device).is_some_and(|old| {
+                (p.online_since_ms, p.seq) == (old.presence.online_since_ms, old.presence.seq)
+            });
+            if !repeated && self.on_presence(p, now) {
+                outcome.accepted = outcome.accepted.saturating_add(1);
+            } else {
+                outcome.stale = outcome.stale.saturating_add(1);
+            }
+        }
+        outcome
     }
 
     /// User picks a crew (in `NeedsChoice`, or switches explicitly while in a session). The
