@@ -211,3 +211,26 @@ configurable asymmetry. A falseticker server is off by 200 ms.
   KoD parsing, cookie mismatch, LI=3, short packet and mode errors are all rejected.
 - A network test querying `time.cloudflare.com` must be `#[ignore]`, because the CI/sandbox may block UDP 123.
 - `cargo clippy -p duoclip-clock --all-targets -- -D warnings` is clean and `cargo fmt` is applied. Keep tests fast (< 10 s total, release not required).
+
+## Implementation notes (accepted deviations, Phase A review)
+
+- **Error bound:** the literal formula (`min_delay/2 + root_distance + 2σ + rate_uncert·age`) covered only 95–97% in simulation. It was
+  replaced by a rigorous worst case: the envelope of all lines consistent with every kept sample's hard limit
+  (`delay/2 + root_distance + |rate|·delay`). Simulation shows the error within the bound in ≥ 99% of steps. `sigma_ns` is informational only.
+- `rate_uncert_ppb` is a hard limit (pairwise slope ranges intersected with prior ± 50 ppm), not a 1σ value. Holdover and freeze bounds
+  therefore grow conservatively (~18 ms per 30 min outage).
+- Filter: if the lowest-delay quantile spans less than `min_span_for_rate_ns`, the next-lowest-delay samples are added. The delay-ratio test
+  never rejects samples within 0.5 ms of the minimum.
+- The estimate is centered between the WLS fit and the minimax center (`CENTER_FRACTION = 1/8`, tuned by simulation) to avoid tail errors on jittery paths.
+- `combine`: rate weighted by `1/rate_uncert²`; bound = `min_i(bound_i + |combined − offset_i|)`.
+- `AppClock`:
+  - `freeze()` returns the best-estimate (target) line, not the live slewing line. App code must stamp hotkeys and capture
+    windows with the frozen mapping;
+  - an update with `now_local` older than the previous update is ignored for already-published time;
+  - history is capped at 2048 segments;
+  - in a multithreaded app, read `now_local` after taking the lock that guards `update()`.
+- `parse_response` checks the cookie before KoD (a spoofed KoD can't disable a source) and rejects a zero receive timestamp.
+  `reburst()` respects the 15 s politeness minimum.
+- "bound < 15 ms with symmetric 5–20 ms delays" holds for 5–20 ms **round trip**. With 5–20 ms **each way**, the median bound is ~11.5 ms
+  and no rigorous bound reaches p99 < 15 ms.
+- SNTP only (unauthenticated). NTS is still TODO.

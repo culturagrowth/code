@@ -222,6 +222,30 @@ fn bound_is_not_absurdly_loose() {
     );
     assert!(median < 10 * MS);
 
+    // The harsher reading, 5–20 ms **each way** (10–40 ms round trips): the honest bound cannot
+    // go below the physical limit min_delay/2 ≈ 5.5 ms plus the extrapolation, but it is still
+    // below 15 ms in the median step and stays honest (estimator_error_stays_below_bound...).
+    let mut all = Vec::new();
+    for seed in 10..16 {
+        let (_, bounds, _) = run_single(
+            seed,
+            NetworkModel::symmetric_uniform(5 * MS, 20 * MS),
+            3,
+            15 * MIN,
+        );
+        all.extend(bounds);
+    }
+    all.sort_unstable();
+    let below = all.iter().filter(|&&b| b < 15 * MS).count() as f64 / all.len() as f64;
+    let median = all[all.len() / 2];
+    println!(
+        "5-20 ms each way: median bound {:.2} ms, {:.2} % below 15 ms",
+        median as f64 / 1e6,
+        below * 100.0
+    );
+    assert!(median < 13 * MS, "median bound {median}");
+    assert!(below >= 0.8, "only {:.2} % below 15 ms", below * 100.0);
+
     // A good wired path: the bound is close to the physical limit (half the ~8.5 ms round trip).
     let (_, bounds, errs) = run_single(20, wired(), 2, 15 * MIN);
     let median = bounds[bounds.len() / 2];
@@ -502,8 +526,43 @@ fn pipeline_end_to_end() {
     // The persisted drift matches the truth.
     let d = clock.drift_state();
     assert!((d.rate_ppb - w.truth.drift_ppb).abs() < 2_000.0);
+    // serde_json's default float parser may be 1 ulp off: compare with a tolerance.
     let restored = DriftState::from_json(&d.to_json().unwrap()).unwrap();
-    assert_eq!(restored, d);
+    assert_eq!(restored.saved_at_utc_ns, d.saved_at_utc_ns);
+    assert!((restored.rate_ppb - d.rate_ppb).abs() <= 1e-9 * d.rate_ppb.abs());
+    assert!((restored.rate_uncert_ppb - d.rate_uncert_ppb).abs() <= 1e-9 * d.rate_uncert_ppb);
+}
+
+#[test]
+fn pipeline_slews_away_a_sub_threshold_initial_error() {
+    // The OS clock is 400 ms off: below the 1 s step threshold, so even UNSYNCED the clock must
+    // converge by slewing alone (400 ms at 500 ppm takes 800 s), never stepping or going back.
+    let mut w = World::new(9, three_good_and_a_falseticker());
+    let guess = FrozenMapping {
+        ref_local_ns: 0,
+        ref_utc_ns: w.truth.utc_at(0) - 400 * MS,
+        rate_ppb: 0.0,
+        bound_ns: 2 * SEC,
+        epoch_id: 0,
+    };
+    let mut clock = AppClock::new(ClockConfig::default(), Some(guess));
+    let early = run_pipeline(&mut w, &mut clock, 0, 10 * MIN, |t, c, w| {
+        // While slewing, the live bound covers the pending correction...
+        let st = c.status(t);
+        assert!((c.utc_at(t) - w.truth.utc_at(t)).abs() <= st.bound_ns);
+        // ... and the frozen mapping already has the best estimate.
+        if t >= MIN {
+            assert!((c.freeze(t).utc_at(t) - w.truth.utc_at(t)).abs() < 5 * MS);
+        }
+    });
+    assert_eq!(early.synced, 0, "not SYNCED while 100+ ms are pending");
+    let late = run_pipeline(&mut w, &mut clock, 10 * MIN, 40 * MIN, |_, _, _| {});
+    assert_eq!(clock.epoch_id(), 0, "no step");
+    let tail = run_pipeline(&mut w, &mut clock, 40 * MIN, 60 * MIN, |t, c, w| {
+        assert!((c.utc_at(t) - w.truth.utc_at(t)).abs() < MS, "converged");
+        assert!(c.pending_slew_ns(t).abs() < MS);
+    });
+    assert!(late.honest_live == late.checks && tail.synced == tail.checks);
 }
 
 #[test]

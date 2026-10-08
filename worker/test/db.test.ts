@@ -86,6 +86,116 @@ describe("reserveBytes (atomic quota accounting in SQL)", () => {
   });
 });
 
+describe("reserveBytes with a service-wide budget", () => {
+  const GLOBAL = { ...LIMITS, globalDayLimit: 1500 };
+
+  it("charges the global counter together with the clip and the device", async () => {
+    const { d1, db } = fresh();
+    await withClip(db);
+    expect(await db.reserveBytes({ clipId: CLIP, deviceId: A, day: "d", delta: 400, ...GLOBAL })).toBe("ok");
+    expect(await db.reserveBytes({ clipId: CLIP, deviceId: B, day: "d", delta: 600, ...GLOBAL })).toBe("ok");
+    expect(d1.query("SELECT scope, day, n FROM counters")).toEqual([{ scope: "bytes", day: "d", n: 1000 }]);
+  });
+
+  it("rolls the clip and device reservations back when the global budget is exhausted", async () => {
+    const { d1, db } = fresh();
+    await withClip(db);
+    await withClip(db, "00000000-0000-0000-0000-0000000000c2");
+    await db.reserveBytes({ clipId: CLIP, deviceId: A, day: "d", delta: 1000, ...GLOBAL });
+    const other = "00000000-0000-0000-0000-0000000000c2";
+    expect(await db.reserveBytes({ clipId: other, deviceId: B, day: "d", delta: 501, ...GLOBAL })).toBe("global_limit");
+    expect((await db.getClip(other))?.bytes).toBe(0);
+    expect(d1.query("SELECT device_id, bytes FROM usage ORDER BY device_id")).toEqual([
+      { device_id: A, bytes: 1000 },
+      { device_id: B, bytes: 0 },
+    ]);
+    expect(d1.query("SELECT n FROM counters")).toEqual([{ n: 1000 }]);
+    expect(await db.reserveBytes({ clipId: other, deviceId: B, day: "d", delta: 500, ...GLOBAL })).toBe("ok");
+    expect(d1.query("SELECT n FROM counters")).toEqual([{ n: 1500 }]);
+  });
+
+  it("is skipped entirely when no global limit is given", async () => {
+    const { d1, db } = fresh();
+    await withClip(db);
+    await db.reserveBytes({ clipId: CLIP, deviceId: A, day: "d", delta: 400, ...LIMITS });
+    expect(d1.query("SELECT * FROM counters")).toEqual([]);
+  });
+
+  it("never exceeds the budget under concurrency", async () => {
+    const { db } = fresh();
+    const clips = Array.from({ length: 6 }, (_, i) => `00000000-0000-0000-0000-0000000000d${i}`);
+    for (const clip of clips) {
+      await withClip(db, clip);
+    }
+    const verdicts = await Promise.all(
+      clips.map((clip) => db.reserveBytes({ clipId: clip, deviceId: A, day: "d", delta: 400, ...LIMITS, dayLimit: 10_000, globalDayLimit: 1000 })),
+    );
+    expect(verdicts.filter((v) => v === "ok")).toHaveLength(2);
+    expect(verdicts.filter((v) => v === "global_limit")).toHaveLength(4);
+    const total = (await Promise.all(clips.map((clip) => db.getClip(clip)))).reduce((sum, clip) => sum + (clip?.bytes ?? 0), 0);
+    expect(total).toBe(800);
+  });
+});
+
+describe("counters", () => {
+  it("reserves up to the limit, refuses beyond it and gives amounts back", async () => {
+    const { d1, db } = fresh();
+    expect(await db.reserveCounter("s", "d", 3, 5)).toBe(true);
+    expect(await db.reserveCounter("s", "d", 3, 5)).toBe(false);
+    expect(await db.reserveCounter("s", "d", 2, 5)).toBe(true);
+    expect(await db.reserveCounter("s", "d", 1, 5)).toBe(false);
+    await db.releaseCounter("s", "d", 4);
+    expect(d1.query("SELECT n FROM counters")).toEqual([{ n: 1 }]);
+    await db.releaseCounter("s", "d", 99); // never below zero
+    expect(d1.query("SELECT n FROM counters")).toEqual([{ n: 0 }]);
+    await db.releaseCounter("missing", "d", 1);
+    expect(d1.query("SELECT * FROM counters")).toHaveLength(1);
+  });
+
+  it("keeps scopes and days apart, and purges old days", async () => {
+    const { d1, db } = fresh();
+    await db.reserveCounter("a", "2026-10-01", 1, 1);
+    await db.reserveCounter("a", "2026-10-08", 1, 1);
+    await db.reserveCounter("b", "2026-10-08", 1, 1);
+    expect(await db.reserveCounter("a", "2026-10-08", 1, 1)).toBe(false);
+    expect(await db.purgeCounters("2026-10-08")).toBe(1);
+    expect(d1.query("SELECT scope, day FROM counters ORDER BY scope")).toEqual([
+      { scope: "a", day: "2026-10-08" },
+      { scope: "b", day: "2026-10-08" },
+    ]);
+  });
+});
+
+describe("crew limit", () => {
+  it("creates nothing once the creator reached the limit", async () => {
+    const { d1, db } = fresh();
+    const id = (n: number) => `00000000-0000-0000-0000-00000000010${n}`;
+    expect(await db.createCrew(id(1), "one", A, 1, 2)).toBe(true);
+    expect(await db.createCrew(id(2), "two", A, 2, 2)).toBe(true);
+    expect(await db.createCrew(id(3), "three", A, 3, 2)).toBe(false);
+    expect(await db.isMember(id(3), A)).toBe(false);
+    expect(d1.query("SELECT crew_id FROM crews ORDER BY crew_id")).toEqual([{ crew_id: id(1) }, { crew_id: id(2) }]);
+    expect(d1.query("SELECT crew_id FROM crew_members ORDER BY crew_id")).toHaveLength(2);
+    expect(await db.createCrew(id(4), "other creator", B, 4, 2)).toBe(true);
+    expect(await db.createCrew(id(5), "zero limit", B, 5, 0)).toBe(false);
+  });
+});
+
+describe("active invites", () => {
+  it("counts only unexpired invites with uses left", async () => {
+    const { db } = fresh();
+    const base = { crew_id: CREW, created_by: A, uses_left: 5 };
+    await db.insertInvite({ ...base, code: "AAAAAAAAA2", expires_at: 1000 });
+    await db.insertInvite({ ...base, code: "AAAAAAAAA3", expires_at: 1000, uses_left: 0 });
+    await db.insertInvite({ ...base, code: "AAAAAAAAA4", expires_at: 100 });
+    await db.insertInvite({ ...base, code: "AAAAAAAAA5", expires_at: 1000, crew_id: "00000000-0000-0000-0000-000000000002" });
+    expect(await db.countActiveInvites(CREW, 500)).toBe(1);
+    expect(await db.countActiveInvites(CREW, 50)).toBe(2);
+    expect(await db.countActiveInvites(CREW, 1000)).toBe(0);
+    expect(await db.countActiveInvites("00000000-0000-0000-0000-000000000009", 0)).toBe(0);
+  });
+});
+
 describe("chunk accounting", () => {
   it("returns announced sizes and keeps the larger value", async () => {
     const { db } = fresh();

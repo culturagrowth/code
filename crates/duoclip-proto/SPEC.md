@@ -128,3 +128,14 @@ pub enum ProtoError { TooLarge(usize), Json(String), UnsupportedVersion(u16), In
 - Oversized input, wrong version, unknown `type`, and garbage bytes are all rejected without panicking.
 - `object_key`/`manifest_key` format is stable (golden strings).
 - `cargo clippy -p duoclip-proto --all-targets -- -D warnings` is clean and `cargo fmt` is applied.
+
+## Implementation notes (accepted deviations, Phase A review)
+
+- IDs (`ClipId`, `DeviceId`, `CrewId`) deserialize ONLY from canonical 36-char lowercase hyphenated text, so each id has
+  exactly one wire form. This matches the Worker and the object-key/AAD canonical form.
+- `ClipRequest::validate` also rejects an empty window (pre + post + margins == 0). `ClipExtend` uses the same overflow rules as `ClipRequest`.
+- `decode` probes `v` first: another protocol version returns `UnsupportedVersion` even if the body is unknown.
+  JSON error text is truncated to 200 chars. Unknown fields are rejected (`deny_unknown_fields`).
+- `Message`'s Debug redacts `ClipKey.key_b64`.
+- `ChunkRef::verify_object_key(crew)`: receivers MUST check that a `ChunkRef`'s key matches `object_key(...)` built from its own fields.
+- Nanosecond timestamps exceed 2^53, so JavaScript consumers (the Worker) must treat them as opaque strings or BigInt.

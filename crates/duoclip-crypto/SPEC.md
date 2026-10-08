@@ -88,3 +88,13 @@ emitted with `is_last = true`. Implement that rule, document it, and test it.
 - Chunker: boundary sizes, an oversized fragment, an empty stream, exactly-one fragment, and that ranges are the
   union of the fragment ranges.
 - `cargo clippy -p duoclip-crypto --all-targets -- -D warnings` is clean and `cargo fmt` is applied.
+
+## Implementation notes (accepted deviations, Phase A review)
+
+- Chunker "hold-back" is lazy closing: the open chunk is only released when the next fragment arrives, so `finish()`
+  always returns the true last chunk (`is_last = true`) and returns `None` only for an empty stream. Empty-data fragments never close a chunk.
+- Manifests: `MAX_MANIFEST_CHUNKS = 100_000`; `MAX_SEALED_MANIFEST_BYTES = 32 MiB` (checked before decrypting);
+  `plain_len <= MAX_CHUNK_BYTES - 32`. An incomplete manifest may already have its final entry `is_last`, which is the state while the last chunk uploads.
+  Callers must check `complete` before treating a clip as whole.
+- `open_raw` checks the length before the magic: a blob shorter than 32 bytes gives `TooShort`.
+- Known limitation: the aes-gcm `zeroize` feature is off, so the AES key schedule is not zeroized (only `ClipKey` is).

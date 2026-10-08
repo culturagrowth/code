@@ -143,3 +143,16 @@ larger); 2–3 audio tracks with 20 ms frames, optionally offset ±200 ms from t
 - `should_extend` truth table. `LocalWindow::compute` with a non-trivial mapping (offset + rate), eps, and max_len capping.
 - Property-style test: random interleavings/jitter never panic and the invariants hold.
 - `cargo clippy -p duoclip-buffer --all-targets -- -D warnings` is clean and `cargo fmt` is applied. Tests run in < 10 s.
+
+## Implementation notes (accepted deviations, Phase A review)
+
+- Packets with an equal dts on one track are kept (dedupe is by (track, dts, content), up to 8 per dts). A keyframe repeating the previous keyframe's pts does not create
+  an empty fragment.
+- A window whose start is in the future re-anchors at the first keyframe at or after the start (`start_missing`). Far-future windows finalize at
+  `created + max_len + timeout` and are `end_truncated`. Packets beyond `start + max_len` are not parked.
+- `source_ended`: if every track already reached the end, the clip is complete (`truncated_by_source_end` stays false).
+- Only keyframes included in the clip delimit fragments, so an extension never adds packets to an already-released fragment.
+- `MemoryBudget` is checked only at request time (worst-case projection). Post-roll growth up to `max_len` is not projected.
+- Configure **only active tracks**: a configured track that never produces packets makes clips wait for the timeout and holds back fragments.
+- `FinishedClip` and drained fragments share `Arc`s, so RAM is freed only when both are dropped. Release-after-write is a Phase B task.
+- Additive public API: the `synth` module (synthetic stream generator), `TrackInfo::{video,audio}`, `*Config::with_tracks`, `RingBuffer::gop_count`, etc.

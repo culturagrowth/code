@@ -98,12 +98,18 @@ function nonNegativeInteger(value: unknown, fallback: number): number {
 export function limitsFromEnv(env: LimitsEnv): Limits {
   return {
     ...DEFAULT_LIMITS,
-    newDevicesPerDay: nonNegativeInteger(env.MAX_NEW_DEVICES_PER_DAY, DEFAULT_LIMITS.newDevicesPerDay),
-    globalDailyBytes: nonNegativeInteger(env.MAX_GLOBAL_DAILY_BYTES, DEFAULT_LIMITS.globalDailyBytes),
+    newDevicesPerDay: nonNegativeInteger(
+      env.MAX_NEW_DEVICES_PER_DAY,
+      DEFAULT_LIMITS.newDevicesPerDay,
+    ),
+    globalDailyBytes: nonNegativeInteger(
+      env.MAX_GLOBAL_DAILY_BYTES,
+      DEFAULT_LIMITS.globalDailyBytes,
+    ),
   };
 }
 
-/** Bytes charged for an object of `size` bytes: the size, but at least {@link MIN_CHARGED_BYTES}. */
+/** Bytes charged for an object of `size` bytes: at least {@link MIN_CHARGED_BYTES}. */
 export function chargedBytes(size: number): number {
   return Math.max(size, MIN_CHARGED_BYTES);
 }

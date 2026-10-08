@@ -98,3 +98,25 @@ All uuids are lowercase and hyphenated.
 - Presign: the URL has `X-Amz-Expires=900`, the method is right, and the path is the expected key.
 - Routes, using in-memory fakes: membership enforcement (403), the pov ≠ caller upload rejection, invite expiry and uses, and idempotent clip registration.
 - `npm run typecheck` and `npm test` both pass.
+
+## Implementation notes (accepted deviations, Phase A review) — the Rust client MUST follow these
+
+- **Upload URLs sign `Content-Length` and `Content-Type: application/octet-stream`.** The client must PUT exactly the returned
+  `content_length`, without chunked transfer encoding. `upload-urls` requires `manifest_size` whenever `manifest: true`, and manifest
+  bytes count against quotas.
+- Response shape: `{expires_in, expires_at, headers, chunks: [{index, key, url, content_length}], manifest: {key, url} | null}`.
+- Extra tables, in `migrations/0002_abuse_limits.sql`:
+  - `clips.bytes` and `clip_chunks`, for an atomic per-clip cap; retrying with the same size is not charged twice;
+  - abuse counters and circuit breakers: new devices per day, global bytes per day, invite-join attempts, a minimum chunk size against floods of tiny objects.
+- Sweep: R2 objects are deleted at `expires_at`, and the row is dropped one run later (two-pass), so late uploads through still-valid URLs are removed too.
+  The sweep stays within the subrequest limits.
+- Status codes:
+  - 201 for created, 200 for repeated;
+  - 404 `invalid_invite`, 409 `clip_exists`, 410 `clip_gone`/`clip_expired`;
+  - 413 `chunk_too_large`/`clip_quota_exceeded`, 429 `daily_quota_exceeded` with `Retry-After`;
+  - 401 with a `reason`.
+- The Ed25519 verification is strict (non-malleable). Invite codes are normalized ASCII-only. The client signs the WHATWG-serialized `pathname + search`.
+- Tests need Node ≥ 22.13 (`node:sqlite`, WebCrypto Ed25519). R2 presigning was validated against an independent SigV4 implementation and
+  `wrangler dev`, **not against real R2** (no credentials yet).
+- Recommended after the friends register: Cloudflare rate-limiting rules on `POST /v1/devices` and `POST /v1/crews/join`, and possibly closing
+  registration. Any crew member can delete any clip (per SPEC), and there is no member removal yet.

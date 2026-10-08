@@ -12,16 +12,24 @@
 //!    fewer than 3 samples, the rate is not estimated: it is the prior (if one was set with
 //!    [`SourceEstimator::set_rate_prior`]) or 0, its uncertainty is at most the prior's 50 ppm,
 //!    and the offset is the weighted mean.
-//! 3. Reports an **honest bound** at `now` (see below): the exact worst case over every line
+//! 3. **Centers** the line at `now` (offset only, the slope is kept): the samples' hard bounds
+//!    confine the true offset at `now` to a feasible interval `[lo, hi]` (see below). A WLS line
+//!    that falls outside the central quarter of that interval at `now` is shifted to its edge.
+//!    Lines out there are usually wrong (a noisy slope extrapolated from a few lucky samples),
+//!    and the shift can only shrink the worst case. In simulations this cuts the tail errors on
+//!    jittery paths by 2–4× and leaves low-jitter paths untouched.
+//! 4. Reports an **honest bound** at `now` (see below): the exact worst case over every line
 //!    consistent with the samples, never larger than the closed form below.
 //!
 //! # The bound
 //!
 //! Every sample `i` in the age window carries a hard bound on its own error,
 //! `B_i = delay_i/2 + root_distance_i` (true for any split of the round trip, if the server is
-//! within its root distance). If the fitted line passes at distance `|r_i|` from that sample
-//! (its residual) and the slope is wrong by at most `U = rate_uncert`, the triangle inequality
-//! gives, at any time `t`,
+//! within its root distance), plus a small slack: 1 µs for rounding and `1e-4 · delay_i`, because
+//! the offset is measured over the round trip but assigned to `t4`, and a local clock running up
+//! to 100 ppm off moves it by up to `rate · delay` in between. If the fitted line passes at
+//! distance `|r_i|` from that sample (its residual) and the slope is wrong by at most
+//! `U = rate_uncert`, the triangle inequality gives, at any time `t`,
 //!
 //! ```text
 //! |fit(t) − truth(t)| ≤ B_i + |r_i| + U·|t − t_i|      for every i,
@@ -32,6 +40,11 @@
 //! with all terms taken from the same sample so that they are consistent: the only statistical
 //! ingredient left is `U`. (Mixing the min-delay sample, often many minutes old, with the
 //! distance to the newest sample is not honest when the slope is off.)
+//!
+//! The reported bound is the minimum of this closed form and the exact worst case: the largest
+//! `|fit(now) − line(now)|` over all lines that pass within `B_j` of every sample `j` with a
+//! slope in the feasible range (a 2-variable linear program, solved in closed form over all
+//! pairs of constraints).
 //!
 //! # Rate uncertainty
 //!
@@ -59,11 +72,26 @@ const WEIGHT_FLOOR_NS: f64 = 500_000.0;
 /// The ratio filter never rejects samples within this much of the minimum delay, so a single
 /// sample with a (clamped) zero delay cannot reject every other sample.
 const RATIO_FILTER_FLOOR_NS: i64 = 500_000;
-/// Slack added to each sample's hard bound (clock drift during the round trip, rounding).
+/// Constant slack added to each sample's hard bound (rounding).
 const SAMPLE_BOUND_SLACK_NS: f64 = 1_000.0;
+/// Slack proportional to the delay: the offset is measured over the round trip but assigned to
+/// `t4`; a local clock up to 100 ppm off moves it by up to `1e-4 · delay` in between.
+const SAMPLE_BOUND_RATE_SLACK: f64 = 1e-4;
+/// At `now`, the fitted line is kept within this fraction of the feasible interval's width from
+/// the interval's center (`1/8` either side: the central quarter).
+const CENTER_FRACTION: f64 = 0.125;
 /// At most this many samples (the lowest-delay ones) constrain the slope and anchor the bound,
 /// keeping the `O(n²)` work bounded for long remap windows. Any subset is still rigorous.
 const MAX_CONSTRAINT_SAMPLES: usize = 256;
+
+/// The hard bound of one sample's error (see the module docs), in ns.
+fn hard_bound(s: &Sample) -> f64 {
+    let delay = s.delay_ns.max(0) as f64;
+    delay / 2.0
+        + s.root_distance_ns.max(0) as f64
+        + SAMPLE_BOUND_SLACK_NS
+        + SAMPLE_BOUND_RATE_SLACK * delay
+}
 
 /// Sample filter and fit parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,7 +200,10 @@ impl SourceEstimator {
 
     /// Fit the current samples and report the estimate and its bound at `now_local`.
     ///
-    /// Returns `None` if no sample survives the filter.
+    /// The line is centered at `now_local` (see the module docs), so its `offset_ns` depends
+    /// slightly on `now_local`; use the estimate at the time it was computed for (as
+    /// [`crate::combine()`] and [`crate::AppClock::update`] do). Returns `None` if no sample
+    /// survives the filter.
     pub fn estimate(&self, now_local: i64) -> Option<Estimate> {
         let max_age = self.cfg.max_age_ns.max(0) as i128;
         let window: Vec<Sample> = self
@@ -183,7 +214,7 @@ impl SourceEstimator {
             .collect();
         let kept = select(window.iter(), &self.cfg);
         let fit = fit(&kept, &window, &self.cfg, self.prior)?;
-        Some(fit.into_estimate(now_local))
+        Some(fit.centered_at(now_local).into_estimate(now_local))
     }
 
     /// The stored samples, oldest first.
@@ -275,19 +306,30 @@ pub(crate) fn select<'a>(
     v
 }
 
-/// A hard bound `a` on the fit's error at time `t` (see the module docs).
-#[derive(Clone, Copy, Debug)]
+/// One sample's contribution to the anchored bound (see the module docs): at time `t` the fit's
+/// error is at most `b + |r − shift| + U·|t − t_i|`.
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Anchor {
     t: i64,
-    a: f64,
+    /// Hard bound of the sample.
+    b: f64,
+    /// Signed residual of the sample from the unshifted fitted line.
+    r: f64,
 }
 
-/// Weighted least-squares fit of a filtered set, with the anchors of its bound.
+/// Weighted least-squares fit of a filtered set, with the data of its bound.
+///
+/// All coordinates are relative to the base (min-delay) sample: `x = local − base_t`,
+/// `y = offset − base_offset`.
 #[derive(Clone, Debug)]
 pub(crate) struct Fit {
-    pub(crate) ref_local: i64,
-    pub(crate) offset: i64,
-    pub(crate) rate_ppb: f64,
+    base_t: i64,
+    base_offset: i64,
+    x_mean: f64,
+    y_mean: f64,
+    slope: f64,
+    /// Offset shift applied by [`Fit::centered_at`] (0 for the plain WLS line).
+    shift: f64,
     pub(crate) rate_uncert_ppb: f64,
     pub(crate) sigma_ns: f64,
     pub(crate) n: usize,
@@ -300,29 +342,26 @@ pub(crate) struct Fit {
 }
 
 /// The constraints "the true line passes through `[bot, top]` at each sample time, with a slope
-/// in `slope_range`", in coordinates relative to the base sample, plus the fitted line.
+/// in `slope_range`", in coordinates relative to the base sample.
 #[derive(Clone, Debug)]
 struct LpBound {
     base_t: i64,
-    /// `(x, bot, top)` per sample.
+    /// `(x, bot, top)` per sample, sorted by `x`.
     pts: Vec<(f64, f64, f64)>,
     /// `None` when no line satisfies the constraints.
     slope_range: Option<(f64, f64)>,
-    x_mean: f64,
-    y_mean: f64,
-    slope: f64,
 }
 
 impl LpBound {
-    /// Largest `|fit(t) − line(t)|` over all feasible lines, or `None` if infeasible.
+    /// The range `[lo, hi]` of values at `t` of all feasible lines, or `None` if infeasible.
     ///
     /// The maximum of a linear objective over a feasible 2-variable LP equals the minimum over
-    /// all pairs of constraints of the 2-constraint optimum (basis theorem), which is a closed
-    /// form here: `O(n²)`.
-    fn at(&self, t: i64) -> Option<f64> {
+    /// all pairs of constraints of the 2-constraint optimum (LP duality: an optimal dual solution
+    /// has at most two nonzero multipliers), which is a closed form here: `O(n²)`. Feasibility
+    /// itself is guaranteed by `slope_range` (every slope in it admits a feasible line).
+    fn interval(&self, t: i64) -> Option<(f64, f64)> {
         let (blo, bhi) = self.slope_range?;
         let x = (t as i128 - self.base_t as i128) as f64;
-        let fit = self.y_mean + self.slope * (x - self.x_mean);
         let (mut ub, mut lb) = (f64::INFINITY, f64::NEG_INFINITY);
         for (j, &(xj, botj, topj)) in self.pts.iter().enumerate() {
             // Sample j with the slope constraint.
@@ -334,11 +373,11 @@ impl LpBound {
             };
             ub = ub.min(topj + rise);
             lb = lb.max(botj + fall);
-            // Samples j and k: line(t) = lk·v_k + lj·v_j.
+            // Samples j and k: line(t) = lk·v_k + lj·v_j (pts are sorted, so span >= 0).
             for &(xk, botk, topk) in &self.pts[j + 1..] {
                 let span = xk - xj;
                 if span <= 0.0 {
-                    continue;
+                    continue; // same instant: both already bound the line via the slope pairs
                 }
                 let lk = (x - xj) / span;
                 let lj = 1.0 - lk;
@@ -354,7 +393,7 @@ impl LpBound {
         if !(ub.is_finite() && lb.is_finite()) || ub < lb - 1.0 {
             return None;
         }
-        Some((ub - fit).max(fit - lb).max(0.0))
+        Some((lb.min(ub), ub))
     }
 }
 
@@ -367,12 +406,45 @@ impl Fit {
         }
     }
 
+    /// Value of the (shifted) fitted line at local time `t`, relative to the base sample.
+    fn line_at(&self, t: i64) -> f64 {
+        let x = (t as i128 - self.base_t as i128) as f64;
+        self.y_mean + self.shift + self.slope * (x - self.x_mean)
+    }
+
+    /// Error bound of anchor `p` at its own time.
+    fn anchor_value(&self, p: &Anchor) -> f64 {
+        let a = p.b + (p.r - self.shift).abs();
+        if a.is_finite() {
+            a
+        } else {
+            f64::MAX
+        }
+    }
+
+    /// Shift the line (offset only) so that its value at `t` lies within the central part of
+    /// the feasible interval at `t` (see the module docs). No-op when infeasible.
+    pub(crate) fn centered_at(mut self, t: i64) -> Self {
+        if let Some((lo, hi)) = self.lp.interval(t) {
+            let v = self.line_at(t);
+            let mid = 0.5 * (lo + hi);
+            let reach = CENTER_FRACTION * (hi - lo).max(0.0);
+            if v.is_finite() && mid.is_finite() && reach.is_finite() {
+                let c = v.max(mid - reach).min(mid + reach);
+                self.shift += c - v;
+            }
+        }
+        self
+    }
+
     /// The anchored bound at local time `t`: `min_i(a_i + U·|t − t_i|)`.
     fn anchored_at(&self, t: i64) -> f64 {
         let u = self.slope_bound();
         self.anchors
             .iter()
-            .map(|p| p.a + u * (t as i128 - p.t as i128).unsigned_abs() as f64 / 1e9)
+            .map(|p| {
+                self.anchor_value(p) + u * (t as i128 - p.t as i128).unsigned_abs() as f64 / 1e9
+            })
             .fold(f64::INFINITY, f64::min)
     }
 
@@ -380,7 +452,13 @@ impl Fit {
     /// samples' hard bounds and the slope range (never above the anchored bound).
     pub(crate) fn bound_at(&self, t: i64) -> i64 {
         let anchored = self.anchored_at(t);
-        let exact = self.lp.at(t).unwrap_or(f64::INFINITY);
+        let exact = match self.lp.interval(t) {
+            Some((lo, hi)) => {
+                let v = self.line_at(t);
+                (hi - v).max(v - lo).max(0.0)
+            }
+            None => f64::INFINITY,
+        };
         bound_from_f64(anchored.min(exact))
     }
 
@@ -393,6 +471,7 @@ impl Fit {
         let n = pts.len();
         let origin = pts[0].t as i128;
         let rel = |t: i64| (t as i128 - origin) as f64;
+        let a = |i: usize| self.anchor_value(&pts[i]);
         let mut best = self.anchored_at(s).max(self.anchored_at(e));
         if u <= 0.0 || !u.is_finite() {
             return bound_from_f64(best);
@@ -402,20 +481,16 @@ impl Fit {
         let mut bwd = vec![0.0f64; n];
         for i in 0..n {
             fwd[i] = if i == 0 {
-                pts[0].a
+                a(0)
             } else {
-                pts[i]
-                    .a
-                    .min(fwd[i - 1] + u * (rel(pts[i].t) - rel(pts[i - 1].t)))
+                a(i).min(fwd[i - 1] + u * (rel(pts[i].t) - rel(pts[i - 1].t)))
             };
         }
         for i in (0..n).rev() {
             bwd[i] = if i + 1 == n {
-                pts[i].a
+                a(i)
             } else {
-                pts[i]
-                    .a
-                    .min(bwd[i + 1] + u * (rel(pts[i + 1].t) - rel(pts[i].t)))
+                a(i).min(bwd[i + 1] + u * (rel(pts[i + 1].t) - rel(pts[i].t)))
             };
         }
         let (sf, ef) = (rel(s), rel(e));
@@ -436,11 +511,21 @@ impl Fit {
         bound_from_f64(best)
     }
 
+    /// Slope of the fit, in ppb.
+    pub(crate) fn rate_ppb(&self) -> f64 {
+        self.slope * 1e9
+    }
+
+    /// The fit as an [`Estimate`], with its bound at `now_local`. Does not center the line;
+    /// [`SourceEstimator::estimate`] calls [`Fit::centered_at`] first.
     pub(crate) fn into_estimate(self, now_local: i64) -> Estimate {
+        let ref_rel = self.x_mean.round();
+        let ref_local = sat_i64(self.base_t as i128 + ref_rel as i128);
+        let offset_rel = self.line_at(ref_local);
         Estimate {
-            ref_local_ns: self.ref_local,
-            offset_ns: self.offset,
-            rate_ppb: self.rate_ppb,
+            ref_local_ns: ref_local,
+            offset_ns: sat_i64(self.base_offset as i128 + f64_to_i64(offset_rel) as i128),
+            rate_ppb: self.rate_ppb(),
             rate_uncert_ppb: self.rate_uncert_ppb,
             sigma_ns: self.sigma_ns,
             bound_ns: self.bound_at(now_local),
@@ -454,11 +539,7 @@ impl Fit {
 /// The range of slopes of lines passing through every sample's interval
 /// `[y − B, y + B]` (relative to `base`), or `None` if no line does (inconsistent samples).
 /// Slopes are dimensionless (ns of offset per ns of local time).
-fn feasible_slopes(
-    samples: &[Sample],
-    base: Sample,
-    hard_bound: impl Fn(&Sample) -> f64,
-) -> Option<(f64, f64)> {
+fn feasible_slopes(samples: &[Sample], base: Sample) -> Option<(f64, f64)> {
     let mut pts: Vec<(i64, f64, f64)> = samples
         .iter()
         .map(|s| {
@@ -558,12 +639,9 @@ pub(crate) fn fit(
     };
 
     // Feasible slopes from the hard per-sample bounds, intersected with the prior range.
-    let hard_bound = |s: &Sample| {
-        s.delay_ns.max(0) as f64 / 2.0 + s.root_distance_ns.max(0) as f64 + SAMPLE_BOUND_SLACK_NS
-    };
     let prior_lo = (prior_rate_ppb - prior_uncert_ppb) * 1e-9;
     let prior_hi = (prior_rate_ppb + prior_uncert_ppb) * 1e-9;
-    let feasible = feasible_slopes(window, base, hard_bound).map(|(lo, hi)| {
+    let feasible = feasible_slopes(window, base).map(|(lo, hi)| {
         let (l, h) = (lo.max(prior_lo), hi.min(prior_hi));
         // Drift outside the prior range: trust the data alone.
         if l <= h {
@@ -573,7 +651,7 @@ pub(crate) fn fit(
         }
     });
     let slope = match (wls_slope, feasible) {
-        (Some(b), Some((lo, hi))) => b.clamp(lo, hi),
+        (Some(b), Some((lo, hi))) => b.max(lo).min(hi),
         (Some(b), None) => b,
         (None, _) => prior_rate_ppb * 1e-9,
     };
@@ -592,39 +670,39 @@ pub(crate) fn fit(
     let mut anchors: Vec<Anchor> = window
         .iter()
         .chain(kept.iter())
-        .map(|s| {
-            let r = residual(rel_x(s), rel_y(s), slope).abs();
-            let a = hard_bound(s) + r;
-            Anchor {
-                t: s.at_local_ns,
-                a: if a.is_finite() { a } else { f64::MAX },
-            }
+        .map(|s| Anchor {
+            t: s.at_local_ns,
+            b: hard_bound(s),
+            r: residual(rel_x(s), rel_y(s), slope),
         })
         .collect();
-    anchors.sort_by(|p, q| p.t.cmp(&q.t).then(p.a.total_cmp(&q.a)));
-    anchors.dedup_by_key(|p| p.t);
+    anchors.sort_by(|p, q| {
+        p.t.cmp(&q.t)
+            .then(p.b.total_cmp(&q.b))
+            .then(p.r.total_cmp(&q.r))
+    });
+    anchors.dedup();
 
+    let mut pts: Vec<(f64, f64, f64)> = window
+        .iter()
+        .map(|s| {
+            let (y, b) = (rel_y(s), hard_bound(s));
+            (rel_x(s), y - b, y + b)
+        })
+        .collect();
+    pts.sort_by(|p, q| p.0.total_cmp(&q.0));
     let lp = LpBound {
         base_t: base.at_local_ns,
-        pts: window
-            .iter()
-            .map(|s| {
-                let (y, b) = (rel_y(s), hard_bound(s));
-                (rel_x(s), y - b, y + b)
-            })
-            .collect(),
+        pts,
         slope_range: feasible,
+    };
+    Some(Fit {
+        base_t: base.at_local_ns,
+        base_offset: base.offset_ns,
         x_mean,
         y_mean,
         slope,
-    };
-    let ref_rel = x_mean.round();
-    let offset_at_ref = y_mean + slope * (ref_rel - x_mean);
-    Some(Fit {
-        lp,
-        ref_local: sat_i64(base.at_local_ns as i128 + ref_rel as i128),
-        offset: sat_i64(base.offset_ns as i128 + f64_to_i64(offset_at_ref) as i128),
-        rate_ppb: slope * 1e9,
+        shift: 0.0,
         rate_uncert_ppb,
         sigma_ns: if sigma_ns.is_finite() {
             sigma_ns
@@ -635,6 +713,7 @@ pub(crate) fn fit(
         min_delay,
         last_local,
         anchors,
+        lp,
     })
 }
 
@@ -676,8 +755,8 @@ mod tests {
         assert_eq!(est.ref_local_ns, 10 * SEC);
         assert_eq!(est.rate_ppb, 0.0);
         assert_eq!(est.rate_uncert_ppb, FALLBACK_RATE_UNCERT_PPB);
-        // delay/2 + root distance (+1 µs slack); no residual for a single sample.
-        assert_eq!(est.bound_ns, 4 * MS + 100_000 + 1_000);
+        // delay/2 + root distance + slack (1 µs + 1e-4·delay); no residual for a single sample.
+        assert_eq!(est.bound_ns, 4 * MS + 100_000 + 1_000 + 800);
         assert_eq!(est.sigma_ns, 0.0);
         // 64 s later the 50 ppm term adds 3.2 ms.
         let later = e.estimate(74 * SEC).unwrap();
@@ -707,7 +786,7 @@ mod tests {
         assert!(est.rate_uncert_ppb > 10_000.0 && est.rate_uncert_ppb < 16_000.0);
         // Right at the last sample the worst case is that sample's own hard bound.
         assert!(
-            est.bound_ns <= 5 * MS + 100_000 + 1_000 + 2,
+            est.bound_ns <= 5 * MS + 100_000 + 2_000 + 2,
             "{}",
             est.bound_ns
         );
@@ -735,17 +814,82 @@ mod tests {
     fn feasible_slope_range() {
         let base = s(0, BIG, 0);
         let pts = [s(0, BIG, 2 * MS), s(100 * SEC, BIG + 2 * MS, 2 * MS)];
-        // Bounds ±1 ms at both ends: slope in [(2-2)/100 s, (2+2)/100 s] = [0, 40 ppm].
-        let (lo, hi) = feasible_slopes(&pts, base, |s| s.delay_ns as f64 / 2.0).unwrap();
-        assert!(lo.abs() < 1e-12 && (hi - 40e-6).abs() < 1e-12, "{lo} {hi}");
+        // Hard bounds b (1 ms + root distance + slack) at both ends: slope in
+        // [(2 ms - 2b)/100 s, (2 ms + 2b)/100 s].
+        let (lo, hi) = feasible_slopes(&pts, base).unwrap();
+        let b = hard_bound(&pts[0]);
+        assert!((b - (MS as f64 + 100_000.0 + 1_000.0 + 200.0)).abs() < 1e-9);
+        let (elo, ehi) = ((2e6 - 2.0 * b) / 100e9, (2e6 + 2.0 * b) / 100e9);
+        assert!(
+            (lo - elo).abs() < 1e-15 && (hi - ehi).abs() < 1e-15,
+            "{lo} {hi}"
+        );
         // Contradictory samples at the same instant: infeasible.
         let bad = [s(0, BIG, 2 * MS), s(0, BIG + 5 * MS, 2 * MS)];
-        assert!(feasible_slopes(&bad, base, |s| s.delay_ns as f64 / 2.0).is_none());
+        assert!(feasible_slopes(&bad, base).is_none());
+    }
+
+    #[test]
+    fn lp_interval_does_not_depend_on_sample_order() {
+        // Three exact samples; between the last two the feasible interval is pinned by the pair
+        // (50 s, 100 s). That pair must be found whatever order the window is in (the remap
+        // passes windows sorted by delay).
+        let pts = [
+            s(0, BIG, 30 * MS),
+            s(50 * SEC, BIG, 2 * MS),
+            s(100 * SEC, BIG, 2 * MS),
+        ];
+        let cfg = FilterConfig {
+            min_span_for_rate_ns: 0,
+            delay_quantile: 1.0,
+            max_delay_ratio: f64::INFINITY,
+            ..FilterConfig::default()
+        };
+        let interval = |w: &[Sample]| {
+            let kept = select(w.iter(), &cfg);
+            fit(&kept, w, &cfg, None)
+                .unwrap()
+                .lp
+                .interval(75 * SEC)
+                .unwrap()
+        };
+        let sorted = interval(&pts);
+        let reversed = interval(&[pts[2], pts[1], pts[0]]);
+        let b = hard_bound(&pts[1]);
+        assert!(
+            (sorted.0 + b).abs() < 1.0 && (sorted.1 - b).abs() < 1.0,
+            "{sorted:?}"
+        );
+        assert!((reversed.0 - sorted.0).abs() < 1e-6 && (reversed.1 - sorted.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn centering_never_increases_the_bound() {
+        // A WLS line pulled off-center by a heavy-weight sample at the edge of its interval.
+        let mut e = SourceEstimator::new(FilterConfig::default());
+        for k in 0..12 {
+            let off = if k == 11 { BIG + 4 * MS } else { BIG };
+            e.add(s(k * 64 * SEC, off, if k == 11 { 9 * MS } else { 10 * MS }));
+        }
+        let now = 12 * 64 * SEC;
+        let kept = select(e.samples().iter(), e.config());
+        let plain = fit(&kept, e.samples(), e.config(), None).unwrap();
+        let centered = plain.clone().centered_at(now);
+        let (lo, hi) = plain.lp.interval(now).unwrap();
+        let c = centered.line_at(now);
+        assert!(c >= lo && c <= hi);
+        assert!(((c - 0.5 * (lo + hi)).abs()) <= CENTER_FRACTION * (hi - lo) + 1e-6);
+        assert!(
+            (c - plain.line_at(now)).abs() > 100_000.0,
+            "this case does shift"
+        );
+        assert!(centered.bound_at(now) < plain.bound_at(now));
+        assert_eq!(centered.rate_ppb(), plain.rate_ppb(), "slope unchanged");
     }
 
     #[test]
     fn worst_case_bound_is_exact_for_two_samples() {
-        // Two samples 100 s apart, hard bounds ±(1 ms + 0.1 ms + 1 µs), offsets on the line.
+        // Two samples 100 s apart, hard bounds ±(1 ms + 0.1 ms + 1.2 µs), offsets on the line.
         let mut e = SourceEstimator::new(FilterConfig {
             min_span_for_rate_ns: 0,
             ..FilterConfig::default()
@@ -753,7 +897,7 @@ mod tests {
         e.add(s(0, BIG, 2 * MS));
         e.add(s(100 * SEC, BIG, 2 * MS));
         e.add(s(50 * SEC, BIG, 2 * MS));
-        let b = 1_101_000.0;
+        let b = 1_101_200.0;
         // At the middle sample the worst case is its own bound.
         let est = e.estimate(50 * SEC).unwrap();
         assert!((est.bound_ns as f64 - b).abs() <= 1.0, "{}", est.bound_ns);

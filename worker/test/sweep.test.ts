@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { manifestKey, objectKey } from "../src/keys.js";
 import { utcDay } from "../src/quota.js";
-import { SIGNATURE_RETENTION_MS, SWEEP_MAX_CLIPS, runSweep, USAGE_RETENTION_DAYS } from "../src/sweep.js";
+import {
+  SIGNATURE_RETENTION_MS,
+  SWEEP_MAX_CLIPS,
+  SWEEP_STORE_CALL_BUDGET,
+  runSweep,
+  USAGE_RETENTION_DAYS,
+} from "../src/sweep.js";
 import { createHarness, joinCrew, newCrew } from "./helpers/harness.js";
 import type { Harness, TestDevice } from "./helpers/harness.js";
 
@@ -143,6 +149,73 @@ describe("runSweep", () => {
     expect(clipIds(h)).toHaveLength(0);
   });
 
+  it("stays inside the R2 call budget and never drops a row whose objects may remain", async () => {
+    // Pages of 2 keys: a clip with 5 objects takes 3 list + 3 delete calls.
+    const h = createHarness({ storePageSize: 2 });
+    const alice = await h.device(1);
+    const crew = await newCrew(alice);
+    const clips = [];
+    for (let i = 0; i < 10; i += 1) {
+      const id = h.app.randomUuid();
+      expect((await alice.call("POST", "/v1/clips", { clip_id: id, crew_id: crew, ttl_s: 600 })).status).toBe(201);
+      const keys = Array.from({ length: 5 }, (_, n) => objectKey(crew, id, alice.id, "full", n));
+      h.store.put(...keys);
+      clips.push({ id, keys });
+    }
+    h.clock.now += 2 * HOUR;
+
+    const first = await runSweep(h.app);
+    expect(h.store.listCalls + h.store.deleteCalls).toBe(SWEEP_STORE_CALL_BUDGET);
+    expect(first).toMatchObject({
+      clips_processed: 6,
+      clips_incomplete: 1,
+      clips_deferred: 3,
+      clip_rows_deleted: 6,
+      objects_deleted: 6 * 5 + 4,
+      clip_failures: 0,
+    });
+    // Invariant: a clip whose objects may still exist keeps its row (so the next run retries it).
+    expect(clipIds(h)).toHaveLength(4);
+    for (const clip of clips) {
+      if (clip.keys.some((key) => h.store.keys.has(key))) {
+        expect(clipIds(h)).toContain(clip.id);
+      }
+    }
+
+    h.store.listCalls = 0;
+    h.store.deleteCalls = 0;
+    const second = await runSweep(h.app);
+    expect(h.store.listCalls + h.store.deleteCalls).toBeLessThanOrEqual(SWEEP_STORE_CALL_BUDGET);
+    expect(second.clips_incomplete + second.clips_deferred).toBe(0);
+    expect(h.store.keys.size).toBe(0);
+    expect(clipIds(h)).toEqual([]);
+  });
+
+  it("keeps the row of a clip it could not empty, however many runs it takes", async () => {
+    const h = createHarness({ storePageSize: 1 });
+    const alice = await h.device(1);
+    const crew = await newCrew(alice);
+    const id = h.app.randomUuid();
+    await alice.call("POST", "/v1/clips", { clip_id: id, crew_id: crew, ttl_s: 600 });
+    const keys = Array.from({ length: 60 }, (_, n) => objectKey(crew, id, alice.id, "full", n));
+    h.store.put(...keys);
+    h.clock.now += 2 * HOUR;
+
+    let runs = 0;
+    while (clipIds(h).length > 0) {
+      runs += 1;
+      expect(runs).toBeLessThan(10);
+      const stats = await runSweep(h.app);
+      expect(h.store.keys.size === 0 || stats.clips_incomplete === 1).toBe(true);
+      // The row survives exactly until the last object is gone.
+      if (h.store.keys.size > 0) {
+        expect(clipIds(h)).toEqual([id]);
+      }
+    }
+    expect(runs).toBeGreaterThan(1);
+    expect(h.store.keys.size).toBe(0);
+  });
+
   it("purges old signatures, expired invites and stale usage rows", async () => {
     const h = createHarness();
     const alice = await h.device(1);
@@ -178,6 +251,19 @@ describe("runSweep", () => {
     expect(utcDay(h.clock.now)).not.toBe(h.d1.query<{ day: string }>("SELECT day FROM usage")[0]?.day);
     stats = await runSweep(h.app);
     expect(stats.usage_rows_purged).toBe(1);
+  });
+
+  it("purges the per-day abuse counters after the retention window", async () => {
+    const h = createHarness();
+    const alice = await h.device(1);
+    await newCrew(alice); // registering the device counts it for today
+    const today = utcDay(h.clock.now);
+    expect(h.d1.query("SELECT day FROM counters")).toEqual([{ day: today }]);
+    h.clock.now += (USAGE_RETENTION_DAYS - 1) * 24 * HOUR;
+    expect((await runSweep(h.app)).counter_rows_purged).toBe(0);
+    h.clock.now += 2 * 24 * HOUR;
+    expect((await runSweep(h.app)).counter_rows_purged).toBe(1);
+    expect(h.d1.query("SELECT * FROM counters")).toEqual([]);
   });
 
   it("logs a one-line JSON summary with counts", async () => {

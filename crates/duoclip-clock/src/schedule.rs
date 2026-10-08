@@ -9,8 +9,10 @@
 //!   the burst just consume a burst slot.
 //! - Every delay outside the burst gets ±10 % jitter from the injected RNG, so many clients do
 //!   not synchronize their queries.
-//! - After resume from sleep or a network change, [`PollScheduler::reburst`] (a rate-limited
-//!   source does not burst again).
+//! - After resume from sleep or a network change, [`PollScheduler::reburst`]. A rate-limited
+//!   source does not burst again, and bursts start at most once per [`MIN_REBURST_SPACING_NS`]
+//!   (a flapping network must not turn into continuous 2 s polling): a sooner reburst only
+//!   brings the next query forward to [`MIN_INTERVAL_NS`] after the last one.
 
 use std::fmt;
 
@@ -31,6 +33,9 @@ pub const MIN_INTERVAL_NS: i64 = 15_000_000_000;
 pub const MAX_INTERVAL_NS: i64 = 1_024_000_000_000;
 /// Relative jitter applied to each delay: ±10 %.
 pub const JITTER_FRACTION: f64 = 0.10;
+/// Minimum time between the starts of two bursts: 5 min (on average at most 6 queries per
+/// 5 min even on a flapping network).
+pub const MIN_REBURST_SPACING_NS: i64 = 5 * 60 * 1_000_000_000;
 
 /// Polling scheduler for one source.
 pub struct PollScheduler {
@@ -39,6 +44,7 @@ pub struct PollScheduler {
     consecutive_errors: u32,
     next_at: Option<i64>,
     last_attempt: Option<i64>,
+    last_burst_start: i64,
     disabled: bool,
     rng: Box<dyn RngCore + Send>,
 }
@@ -51,6 +57,7 @@ impl fmt::Debug for PollScheduler {
             .field("consecutive_errors", &self.consecutive_errors)
             .field("next_at", &self.next_at)
             .field("last_attempt", &self.last_attempt)
+            .field("last_burst_start", &self.last_burst_start)
             .field("disabled", &self.disabled)
             .finish_non_exhaustive()
     }
@@ -65,6 +72,7 @@ impl PollScheduler {
             consecutive_errors: 0,
             next_at: Some(now),
             last_attempt: None,
+            last_burst_start: now,
             disabled: false,
             rng: Box::new(rng),
         }
@@ -181,7 +189,9 @@ impl PollScheduler {
 
     /// Start a new burst (after resume from sleep or a network change). A disabled source stays
     /// disabled; a rate-limited source (interval above 64 s) only gets one query, no sooner than
-    /// one interval after its last attempt.
+    /// one interval after its last attempt. A burst in progress continues unchanged, and less
+    /// than [`MIN_REBURST_SPACING_NS`] after the previous burst started, no new burst starts: the
+    /// next query is only brought forward to [`MIN_INTERVAL_NS`] after the last attempt.
     pub fn reburst(&mut self, now: i64) {
         if self.disabled {
             return;
@@ -193,8 +203,17 @@ impl PollScheduler {
                 .last_attempt
                 .map_or(now, |t| t.saturating_add(self.interval_ns));
             self.next_at = Some(now.max(earliest));
+        } else if self.burst_remaining > 0 {
+            // Already bursting.
+        } else if (now as i128 - self.last_burst_start as i128) < MIN_REBURST_SPACING_NS as i128 {
+            let earliest = self
+                .last_attempt
+                .map_or(now, |t| t.saturating_add(MIN_INTERVAL_NS));
+            let soon = now.max(earliest);
+            self.next_at = Some(self.next_at.map_or(soon, |t| t.min(soon)));
         } else {
             self.burst_remaining = BURST_COUNT;
+            self.last_burst_start = now;
             let earliest = self
                 .last_attempt
                 .map_or(now, |t| t.saturating_add(BURST_SPACING_NS));
@@ -321,7 +340,7 @@ mod tests {
     fn reburst_after_network_change() {
         let mut s = PollScheduler::with_seed(0, 5);
         let mut now = 0;
-        for _ in 0..10 {
+        while now < 6 * 60 * SEC {
             now = s.next_poll_at().unwrap();
             s.on_success(now);
         }
@@ -333,13 +352,56 @@ mod tests {
             Some(now + 2 * SEC),
             "respects burst spacing"
         );
+        // A second reburst during the burst changes nothing.
+        s.reburst(now + SEC);
+        assert_eq!(s.next_poll_at(), Some(now + 2 * SEC));
         let mut count = 0;
         while s.in_burst() {
-            let t = s.next_poll_at().unwrap();
-            s.on_success(t);
+            now = s.next_poll_at().unwrap();
+            s.on_success(now);
             count += 1;
         }
         assert_eq!(count, BURST_COUNT);
         assert!(format!("{s:?}").contains("PollScheduler"));
+    }
+
+    #[test]
+    fn reburst_storm_is_rate_limited() {
+        // A flapping network calls reburst every 3 s for an hour: bursts start at most once per
+        // MIN_REBURST_SPACING_NS, and otherwise queries stay MIN_INTERVAL_NS apart.
+        let mut s = PollScheduler::with_seed(0, 6);
+        let mut now = 0;
+        let mut polls = vec![];
+        let end = 3_600 * SEC;
+        let mut next_flap = 0;
+        while now < end {
+            let due = s.next_poll_at().unwrap();
+            if next_flap < due {
+                now = next_flap;
+                s.reburst(now);
+                next_flap += 3 * SEC;
+                continue;
+            }
+            now = due;
+            polls.push(now);
+            s.on_success(now);
+        }
+        // Bursts: 1 at start + at most one per 5 min after that.
+        let max_bursts = 1 + (end / MIN_REBURST_SPACING_NS) as usize;
+        let max_polls = max_bursts * BURST_COUNT as usize + (end / MIN_INTERVAL_NS) as usize + 1;
+        assert!(polls.len() <= max_polls, "{} polls", polls.len());
+        // At least 15 s between queries except around bursts (2 s ± 10 % apart).
+        let fast = polls
+            .windows(2)
+            .filter(|w| w[1] - w[0] < MIN_INTERVAL_NS)
+            .count();
+        // (each burst: the gap into it plus the gaps inside it)
+        assert!(
+            fast <= max_bursts * BURST_COUNT as usize,
+            "{fast} fast gaps"
+        );
+        for w in polls.windows(2) {
+            assert!(w[1] - w[0] >= 18 * SEC / 10, "gap {}", w[1] - w[0]);
+        }
     }
 }

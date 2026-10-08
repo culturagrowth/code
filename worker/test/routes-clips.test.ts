@@ -505,6 +505,36 @@ describe("DELETE /v1/clips/:clip", () => {
     expect(up.status).toBe(410);
   });
 
+  it("removes an upload that landed after the first delete when deleted again", async () => {
+    const { h, alice, bob, crew } = await scene();
+    const id = await register(alice, crew);
+    await populate(h, crew, id, [alice.id]);
+    expect((await alice.call("DELETE", `/v1/clips/${id}`)).status).toBe(200);
+    const late = objectKey(crew, id, bob.id, "full", 9);
+    h.store.put(late); // a PUT through a presigned URL that was still valid
+    const again = await bob.call("DELETE", `/v1/clips/${id}`);
+    expect(await json(again)).toEqual({ ok: true, deleted_objects: 1, complete: true });
+    expect(h.store.keys.size).toBe(0);
+    expect(h.d1.query<{ deleted_at: number }>("SELECT deleted_at FROM clips WHERE clip_id = ?", id)[0]?.deleted_at).toBeLessThan(h.clock.now);
+  });
+
+  it("reports an incomplete deletion instead of claiming success, and finishes on retry", async () => {
+    const h = createHarness({ storePageSize: 1 });
+    const alice = await h.device(1);
+    const crew = await newCrew(alice);
+    const id = await register(alice, crew);
+    const keys = Array.from({ length: 20 }, (_, i) => objectKey(crew, id, alice.id, "full", i));
+    h.store.put(...keys);
+    const first = await json<{ deleted_objects: number; complete: boolean }>(await alice.call("DELETE", `/v1/clips/${id}`));
+    expect(first.complete).toBe(false);
+    expect(first.deleted_objects).toBe(15); // 30 R2 calls: 15 list + 15 delete
+    expect(h.store.keys.size).toBe(5);
+    expect(h.store.listCalls + h.store.deleteCalls).toBe(30);
+    const second = await json<{ deleted_objects: number; complete: boolean }>(await alice.call("DELETE", `/v1/clips/${id}`));
+    expect(second).toMatchObject({ deleted_objects: 5, complete: true });
+    expect(h.store.keys.size).toBe(0);
+  });
+
   it("rejects non-members (403) and unknown clips (404)", async () => {
     const { h, alice, eve, crew } = await scene();
     const id = await register(alice, crew);

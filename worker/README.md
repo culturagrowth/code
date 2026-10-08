@@ -7,7 +7,7 @@ enviam/baixam bytes cifrados direto do R2, por **URLs pré-assinadas de 15 minut
 
 - autentica cada instalação por **assinatura Ed25519** (a chave privada fica no PC, protegida por DPAPI);
 - gerencia **crews** (grupos de amigos), convites e membros;
-- registra os clipes e aplica **cotas** (por clipe, por dia e por requisição);
+- registra os clipes e aplica **cotas** (por clipe, por dia e por requisição) e **limites contra abuso**;
 - gera as URLs pré-assinadas de upload (PUT) e download (GET);
 - apaga os clipes expirados (rota `DELETE` e **varredura de hora em hora**).
 
@@ -39,6 +39,9 @@ npx wrangler login
 ```sh
 npx wrangler r2 bucket create duoclip-clips
 ```
+
+**Mantenha o bucket privado:** não habilite o acesso público (domínio `r2.dev` ou domínio personalizado) nem CORS aberto.
+Todo acesso aos objetos deve ser feito por URLs pré-assinadas.
 
 Opcional: acrescente `--location enam` (ou outra dica de localização) para ficar mais perto dos jogadores. O R2 não
 tem região na América do Sul.
@@ -74,8 +77,12 @@ e depois aplique o esquema:
 npx wrangler d1 migrations apply duoclip --remote
 ```
 
-As migrações ficam em `migrations/` (`0001_init.sql` cria `devices`, `crews`, `crew_members`, `invites`, `clips`,
-`clip_chunks`, `usage` e `seen_signatures`). Rode o mesmo comando depois de qualquer migração nova.
+As migrações ficam em `migrations/` e são aplicadas em ordem:
+
+- `0001_init.sql` cria `devices`, `crews`, `crew_members`, `invites`, `clips`, `clip_chunks`, `usage` e `seen_signatures`;
+- `0002_abuse_limits.sql` cria `counters` (contadores diários atômicos dos limites contra abuso) e dois índices.
+
+Rode o mesmo comando depois de qualquer migração nova (inclusive ao atualizar o Worker).
 
 ### 4. Variáveis e segredos
 
@@ -93,6 +100,18 @@ Os dois valores da chave S3 são **segredos** e nunca entram no repositório:
 npx wrangler secret put R2_ACCESS_KEY_ID
 npx wrangler secret put R2_SECRET_ACCESS_KEY
 ```
+
+Duas variáveis **opcionais** ajustam os disjuntores contra abuso (veja "Limites e cotas"). Sem elas valem os padrões;
+um valor ausente ou malformado (qualquer coisa que não seja um inteiro não negativo) também cai no padrão:
+
+```toml
+# MAX_NEW_DEVICES_PER_DAY = "50"             # cadastros novos por dia UTC, no serviço todo ("0" fecha o cadastro)
+# MAX_GLOBAL_DAILY_BYTES = "214748364800"    # 200 GiB anunciados para upload por dia UTC, no serviço todo
+```
+
+**Dica:** o cadastro de dispositivos (`POST /v1/devices`) é aberto por projeto. Depois que todos os seus amigos
+estiverem cadastrados, coloque `MAX_NEW_DEVICES_PER_DAY = "0"` e faça o deploy: ninguém mais consegue criar
+dispositivos (os já cadastrados continuam funcionando). Reabra quando precisar de alguém novo.
 
 Se `ACCOUNT_ID`, `BUCKET_NAME` ou algum segredo estiver ausente ou inválido (por exemplo, o texto `REPLACE_WITH_...` do
 modelo), as rotas que geram URLs respondem `500 internal_error` e o log do Worker diz qual variável está errada
@@ -158,8 +177,8 @@ npm test             # vitest run, em ambiente Node
 
 Os testes não usam rede nem login do wrangler e rodam em poucos segundos:
 
-- o SQL de `src/db.ts` roda de verdade num SQLite em memória (`node:sqlite`) carregado com `migrations/0001_init.sql`
-  (o D1 é SQLite), então as cotas atômicas, o consumo de convites e a proteção contra replay são testados com o SQL real;
+- o SQL de `src/db.ts` roda de verdade num SQLite em memória (`node:sqlite`) carregado com todas as migrações de
+  `migrations/` (o D1 é SQLite), então as cotas atômicas, o consumo de convites e a proteção contra replay são testados com o SQL real;
 - o R2 é substituído por um armazenamento em memória; o relógio e o sorteio são controlados e determinísticos;
 - as chaves de objeto são comparadas com *golden strings* idênticas às dos testes Rust de `crates/duoclip-proto`;
 - as URLs pré-assinadas são conferidas contra uma implementação independente do SigV4.
@@ -178,7 +197,7 @@ Os testes não usam rede nem login do wrangler e rodam em poucos segundos:
 | `src/validate.ts` | Validação dos corpos das requisições |
 | `src/sweep.ts` | Varredura horária |
 | `src/store.ts`, `src/invite.ts`, `src/http.ts`, `src/encoding.ts`, `src/app.ts`, `src/env.ts` | Apoio |
-| `migrations/0001_init.sql` | Esquema do D1 |
+| `migrations/0001_init.sql`, `migrations/0002_abuse_limits.sql` | Esquema do D1 |
 
 ## Referência da API
 
@@ -196,7 +215,9 @@ milissegundos Unix.
 | `X-DC-Timestamp` | milissegundos Unix, inteiro decimal |
 | `X-DC-Signature` | Base64 padrão da assinatura Ed25519 de 64 bytes sobre a string canônica |
 
-String canônica (separada por `\n`, sem `\n` no final):
+String canônica (separada por `\n`, sem `\n` no final). O caminho assinado é o `pathname + search` da URL **já
+serializada** (WHATWG), isto é, como o Worker a enxerga: na query, espaços viram `%20`, apóstrofos viram `%27` etc.
+Nenhuma rota usa query string, então o mais simples é não enviar nenhuma.
 
 ```
 DC1
@@ -213,6 +234,8 @@ Regras:
 - a mesma assinatura repetida em até **10 minutos** → `401` com `reason: "replay"`;
 - falha de autenticação → sempre `401 unauthorized`, com `reason` em `missing_headers`, `bad_headers`, `clock_skew`,
   `unknown_device`, `bad_signature` ou `replay`;
+- a metade `S` da assinatura precisa ser menor que a ordem do grupo (assinatura maleável `S + L` é recusada com
+  `bad_signature`, para que um mesmo pedido não tenha duas assinaturas válidas e escape do anti-replay);
 - não é membro da crew → `403 not_a_member`.
 
 ### Rotas
@@ -220,15 +243,15 @@ Regras:
 | Rota | Quem | Corpo | Resposta |
 |---|---|---|---|
 | `GET /v1/health` | público | | `{"ok":true}` |
-| `POST /v1/devices` | público | `{device_id, public_key_b64, display_name}` | `201` (novo) ou `200` (mesma chave) com `{device_id}`; `409 device_exists` se o id existe com outra chave |
-| `POST /v1/crews` | qualquer dispositivo | `{name}` (1 a 48 caracteres) | `201 {crew_id}`; o criador já é membro |
-| `POST /v1/crews/:crew/invites` | membro | | `201 {code, expires_at}`; código de 10 caracteres `[A-Z2-9]`, válido por 24 h, 5 usos |
-| `POST /v1/crews/join` | qualquer dispositivo | `{code}` | `200 {crew_id}`; `404 invalid_invite` se for inválido, vencido ou sem usos |
+| `POST /v1/devices` | público | `{device_id, public_key_b64, display_name}` | `201` (novo) ou `200` (mesma chave) com `{device_id}`; `409 device_exists` se o id existe com outra chave; `429 registration_limited` quando o limite diário de cadastros novos acabou |
+| `POST /v1/crews` | qualquer dispositivo | `{name}` (1 a 48 caracteres) | `201 {crew_id}`; o criador já é membro; `409 crew_limit` depois de 20 crews criadas |
+| `POST /v1/crews/:crew/invites` | membro | | `201 {code, expires_at}`; código de 10 caracteres `[A-Z2-9]`, válido por 24 h, 5 usos; `409 invite_limit` com 10 convites válidos ao mesmo tempo |
+| `POST /v1/crews/join` | qualquer dispositivo | `{code}` | `200 {crew_id}`; `404 invalid_invite` se for inválido, vencido ou sem usos; `429 too_many_attempts` depois de 20 tentativas falhas no dia |
 | `GET /v1/crews/:crew/members` | membro | | `[{device_id, display_name}]` |
-| `POST /v1/clips` | membro da crew | `{clip_id, crew_id, ttl_s?}` | `201` ou `200` (idempotente para o mesmo dono) com `{clip_id, expires_at}` |
-| `POST /v1/clips/:clip/upload-urls` | membro, e `pov` = quem chama | `{pov, quality, indices[], sizes[], manifest?}` | URLs PUT, veja abaixo |
+| `POST /v1/clips` | membro da crew | `{clip_id, crew_id, ttl_s?}` | `201` ou `200` (idempotente para o mesmo dono) com `{clip_id, expires_at}`; `429 clip_registration_limited` depois de 200 clipes novos no dia |
+| `POST /v1/clips/:clip/upload-urls` | membro, e `pov` = quem chama | `{pov, quality, indices[], sizes[], manifest?, manifest_size?}` | URLs PUT, veja abaixo |
 | `POST /v1/clips/:clip/download-urls` | membro | `{pov, quality, indices[], manifest?}` | URLs GET, veja abaixo |
-| `DELETE /v1/clips/:clip` | dono ou qualquer membro | | `{ok:true, deleted_objects}` (idempotente) |
+| `DELETE /v1/clips/:clip` | dono ou qualquer membro | | `{ok:true, deleted_objects, complete}`; pode ser repetido (apaga também o que chegou depois) |
 
 Detalhes:
 
@@ -238,6 +261,12 @@ Detalhes:
 - `ttl_s`: 1 a 259200 (72 h), padrão 259200. Registrar de novo o mesmo `clip_id` pelo mesmo dono devolve o registro
   original, sem alterar a validade. Outro dono ou outra crew recebe `409 clip_exists`.
 - `quality`: `"proxy"` ou `"full"`. `manifest`: booleano (padrão `false`); pede também a URL do `manifest.bin`.
+- `manifest_size` (só no upload): **obrigatório** quando `manifest` é `true`; é o tamanho exato, em bytes, do
+  `manifest.bin` cifrado (1 a 1 MiB, senão `413 manifest_too_large`). Ele é cobrado nas cotas como se fosse um bloco
+  e entra na assinatura da URL, como o tamanho de cada bloco.
+- `DELETE`: apaga todos os objetos do prefixo do clipe e marca o clipe como apagado. `complete: false` significa que
+  o limite de chamadas ao R2 de uma requisição foi atingido antes de esvaziar o prefixo (não acontece com clipes dentro
+  das cotas); basta repetir o `DELETE`.
 - Clipe inexistente → `404 clip_not_found`; apagado → `410 clip_gone`; vencido → `410 clip_expired`.
 
 #### Resposta de `upload-urls` e `download-urls`
@@ -248,14 +277,18 @@ Detalhes:
   "expires_at": 1791426963900,
   "headers": { "Content-Type": "application/octet-stream" },
   "chunks": [
-    { "index": 0, "key": "clips/{crew}/{clip}/{pov}/full/000000.bin", "url": "https://<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>/clips/...?X-Amz-Expires=900&..." }
+    { "index": 0, "key": "clips/{crew}/{clip}/{pov}/full/000000.bin", "content_length": 4194304, "url": "https://<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>/clips/...?X-Amz-Expires=900&..." }
   ],
-  "manifest": { "key": "clips/{crew}/{clip}/{pov}/full/manifest.bin", "url": "https://..." }
+  "manifest": { "key": "clips/{crew}/{clip}/{pov}/full/manifest.bin", "content_length": 812, "url": "https://..." }
 }
 ```
 
-- `headers` (só no upload): o `PUT` **deve** enviar exatamente `Content-Type: application/octet-stream`, porque esse
-  cabeçalho faz parte da assinatura. Sem ele o R2 recusa com `403 SignatureDoesNotMatch`.
+- `headers` e `content_length` (só no upload): o `PUT` **deve** enviar exatamente `Content-Type: application/octet-stream`
+  e exatamente `Content-Length: <content_length>` (o tamanho anunciado em `sizes[]` / `manifest_size`). Os dois
+  cabeçalhos fazem parte da assinatura (`X-Amz-SignedHeaders=content-length;content-type;host`): com outro valor o R2
+  recusa com `403 SignatureDoesNotMatch`. Assim ninguém consegue guardar mais bytes do que as cotas cobraram. Um
+  cliente HTTP normal já define o `Content-Length` sozinho quando o corpo tem tamanho conhecido; não use
+  `Transfer-Encoding: chunked`.
 - `manifest` é `null` quando não foi pedido.
 - As URLs valem **15 minutos** (`X-Amz-Expires=900`). Para retomar, peça novas URLs; pedir de novo o mesmo bloco com o
   mesmo tamanho **não** gasta cota.
@@ -285,37 +318,66 @@ Exemplo (UUIDs `00000000-...-0001`, `-0002`, `-0003`):
 | Total por clipe (todos os POVs e qualidades) | 1,5 GiB | `413 clip_quota_exceeded` |
 | Total por dispositivo por dia UTC | 10 GiB | `429 daily_quota_exceeded`, com `Retry-After` até a meia-noite UTC |
 | Vida de um clipe | 72 h | |
+| `manifest.bin` (cifrado) | 1 MiB, tamanho exato informado em `manifest_size` | `413 manifest_too_large` |
+| Cobrança mínima por objeto | 256 KiB (um clipe guarda no máximo 6144 objetos) | conta como 256 KiB nas cotas |
+| Cadastros novos de dispositivos por dia UTC (serviço todo) | 50 (`MAX_NEW_DEVICES_PER_DAY`) | `429 registration_limited` |
+| Bytes anunciados por dia UTC (serviço todo) | 200 GiB (`MAX_GLOBAL_DAILY_BYTES`) | `429 global_quota_exceeded` |
+| Crews criadas por dispositivo | 20 | `409 crew_limit` |
+| Convites válidos ao mesmo tempo por crew | 10 | `409 invite_limit` |
+| Tentativas de entrar com convite por dispositivo por dia UTC (só as que falham contam) | 20 | `429 too_many_attempts` |
+| Clipes novos por dispositivo por dia UTC | 200 | `429 clip_registration_limited` |
 
-As cotas valem para os **tamanhos informados** em `sizes[]` e são reservadas de forma atômica no D1 (sem corrida entre
-requisições simultâneas). Uma requisição recusada não deixa nada reservado. O `manifest.bin` não entra na conta.
+Os limites diários de `429` trazem `Retry-After` até a meia-noite UTC.
+
+As cotas valem para os **tamanhos informados** em `sizes[]` e `manifest_size`, e esses tamanhos são **assinados** nas URLs
+(`Content-Length`), então valem de verdade. Cada objeto é cobrado pelo maior entre o seu tamanho e 256 KiB, para que
+milhões de objetos minúsculos não custem quase nada em cota e muito em operações do R2. As reservas são atômicas no D1
+(sem corrida entre requisições simultâneas), e uma requisição recusada não deixa nada reservado. Pedir de novo a URL do
+mesmo objeto com o mesmo tamanho (ou menor) não custa nada.
 
 ## Varredura horária (`scheduled`)
 
 Todo início de hora o Worker:
 
 1. apaga os objetos R2 de cada clipe com `expires_at < agora` (listando e apagando o prefixo em lotes de até 1000);
-2. apaga a linha do clipe, mas só quando o vencimento foi há mais de 15 minutos. Assim a execução seguinte ainda
-   consegue remover um upload tardio que tenha usado uma URL ainda válida;
-3. apaga assinaturas anti-replay com mais de 15 minutos, convites vencidos ou sem usos e contadores de uso com mais de
-   7 dias;
+2. apaga a linha do clipe, mas só quando o vencimento foi há mais de 15 minutos **e** o prefixo foi esvaziado por
+   completo. Assim a execução seguinte ainda consegue remover um upload tardio que tenha usado uma URL ainda válida, e
+   nunca se perde a referência de um clipe que ainda tem objetos;
+3. apaga assinaturas anti-replay com mais de 15 minutos, convites vencidos ou sem usos e contadores de uso e de limites
+   com mais de 7 dias;
 4. registra uma linha JSON com as contagens (`clips_processed`, `objects_deleted`, `clip_rows_deleted`, `clip_failures`,
-   `signatures_purged`, `invites_purged`, `usage_rows_purged`).
+   `clips_incomplete`, `clips_deferred`, `signatures_purged`, `invites_purged`, `usage_rows_purged`,
+   `counter_rows_purged`).
 
-Um clipe que falha (erro do R2) é registrado e tentado de novo na próxima hora, sem impedir os outros. Cada execução
-trata no máximo 25 clipes (o plano gratuito limita as chamadas por invocação); o que sobrar fica para a próxima hora.
+Um clipe que falha (erro do R2) é registrado e tentado de novo na próxima hora, sem impedir os outros. O plano gratuito
+limita cada invocação a 50 subrequisições (chamadas ao D1 e ao R2 contam), então cada execução faz no máximo 40 chamadas
+ao R2 (`SWEEP_STORE_CALL_BUDGET`) e olha no máximo 20 clipes. O que não coube (`clips_deferred`, ou um clipe grande
+esvaziado só em parte, `clips_incomplete`) fica com a linha intacta para a próxima hora. No plano pago esses números
+podem ser aumentados em `src/sweep.ts`.
 
 ## Segurança e limitações conhecidas
 
 - **Conteúdo:** o Worker só vê nomes de objetos e tamanhos informados. Os blocos e o `manifest.bin` chegam cifrados dos
   apps; a chave do clipe nunca passa pelo Worker.
-- **Cotas por tamanho informado:** o `Content-Length` não é assinado nas URLs (só o `Content-Type`). Um membro mal
-  intencionado poderia enviar mais bytes do que anunciou. O ciclo de vida do R2 limita o dano no tempo; num grupo de
-  amigos o risco é aceito. Se precisar, assine também o `content-length`.
-- **Limite de taxa:** `POST /v1/devices` e `POST /v1/crews/join` são o alvo mais óbvio de abuso (o cadastro de
-  dispositivos é aberto). Crie regras de **Rate limiting** da Cloudflare (Security → WAF → Rate limiting rules) para
-  esses dois caminhos. O código do convite tem 34^10 combinações e 5 usos, então adivinhar é inviável.
+- **Cotas por tamanho assinado:** `Content-Type` e `Content-Length` entram na assinatura das URLs de upload, então cada
+  objeto tem exatamente o tamanho cobrado, inclusive o `manifest.bin`. Uma URL de upload sem tamanho nunca é emitida.
+  Isso foi conferido contra uma implementação independente do SigV4 nos testes, mas **não** contra o R2 real (não há
+  credenciais nos testes). Se o R2 recusar o `Content-Length` assinado, o sintoma é `403 SignatureDoesNotMatch` em todo
+  upload; nesse caso a regra de ciclo de vida de 3 dias continua limitando o dano, e a assinatura do tamanho pode ser
+  retirada em `src/presign.ts` (voltando ao risco de um membro enviar mais bytes do que anunciou).
+- **Cadastro aberto e disjuntores:** `POST /v1/devices` é aberto por projeto, então qualquer pessoa que descubra o
+  endereço poderia criar dispositivos e, com eles, cota própria. Os disjuntores (cadastros por dia, bytes por dia no
+  serviço todo, crews, convites, clipes) limitam o custo no pior caso. O outro lado da moeda: alguém que consiga
+  esgotar esses limites derruba novos cadastros ou os uploads do dia (`429`), sem acesso a nenhum clipe. Depois de
+  cadastrar os amigos, use `MAX_NEW_DEVICES_PER_DAY = "0"`.
+- **Limite de taxa:** além disso, crie regras de **Rate limiting** da Cloudflare (Security → WAF → Rate limiting rules)
+  para `POST /v1/devices` e `POST /v1/crews/join`, e um limite geral por IP para `/v1/*`: cada requisição assinada grava
+  uma linha no D1 (anti-replay). O código do convite tem 34^10 combinações, 5 usos e só 20 tentativas falhas por
+  dispositivo por dia, então adivinhar é inviável.
 - **Upload tardio:** uma URL já emitida continua válida por até 15 minutos mesmo depois de o clipe ser apagado. A
-  varredura (segunda passada) e a regra de ciclo de vida removem o que sobrar.
+  varredura (segunda passada), um novo `DELETE` e a regra de ciclo de vida removem o que sobrar.
+- **Existência de ids:** um membro de outra crew recebe `403` e um id inexistente recebe `404`; como os ids são UUIDs
+  aleatórios, isso não permite enumerar nada na prática.
 - **Relógio:** a assinatura vale ±5 minutos. O app deve sincronizar o relógio (ou usar `server_time_ms` do erro
   `clock_skew`).
 - **Dependências de desenvolvimento:** o `npm audit` aponta avisos na cadeia `wrangler → miniflare → sharp`. Eles afetam

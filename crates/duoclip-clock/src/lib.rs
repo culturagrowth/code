@@ -10,13 +10,15 @@
 //!    four-timestamp exchange each. The client keeps `t1`/`t4` on its own monotonic clock and the
 //!    request carries a random cookie instead of a real timestamp ([`ntp::build_request`]).
 //! 2. A [`SourceEstimator`] per source filters samples by delay ("lucky packets") and fits
-//!    `offset(local) = a + b·(local − ref)` by weighted least squares. Its error bound is a
-//!    worst case, not a statistical guess: the largest deviation of any line consistent with
-//!    every sample's hard bound `delay/2 + root_distance` (see [`estimator`]).
+//!    `offset(local) = a + b·(local − ref)` by weighted least squares, kept near the center of
+//!    the interval the samples allow at `now`. Its error bound is a worst case, not a
+//!    statistical guess: the largest deviation of any line consistent with every sample's hard
+//!    bound `delay/2 + root_distance` (see [`estimator`]).
 //! 3. [`combine()`] intersects the per-source intervals (Marzullo), drops falsetickers and averages
 //!    the rest.
 //! 4. [`AppClock::update`] slews (never jumps backwards) towards the combined estimate; steps only
-//!    when explicitly allowed, bumping the `epoch_id`.
+//!    when explicitly allowed (or while UNSYNCED), bumping the `epoch_id`. Read the live clock at
+//!    the current monotonic time; capture windows and event stamps use [`AppClock::freeze`].
 //! 5. [`AppClock::freeze`] gives the linear mapping used to choose capture windows; afterwards,
 //!    [`two_sided_mapping`] refits each clip's interval with samples from before **and** after it.
 //! 6. [`PeerLink`] / [`cross_check`] refine and validate the result peer-to-peer.

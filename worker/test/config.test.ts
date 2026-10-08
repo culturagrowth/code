@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SqliteD1 } from "./helpers/sqlite-d1.js";
@@ -41,7 +41,7 @@ describe("project configuration (SPEC layout)", () => {
     const tables = d1
       .query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .map((row) => row.name);
-    for (const table of ["devices", "crews", "crew_members", "invites", "clips", "usage", "seen_signatures"]) {
+    for (const table of ["devices", "crews", "crew_members", "invites", "clips", "usage", "seen_signatures", "counters"]) {
       expect(tables).toContain(table);
     }
     const columns = (table: string) =>
@@ -53,5 +53,19 @@ describe("project configuration (SPEC layout)", () => {
     expect(columns("clips")).toEqual(expect.arrayContaining(["clip_id", "crew_id", "owner", "created_at", "expires_at", "deleted_at"]));
     expect(columns("usage")).toEqual(["device_id", "day", "bytes"]);
     expect(columns("seen_signatures")).toEqual(["sig", "seen_at"]);
+    expect(columns("counters")).toEqual(["scope", "day", "n"]);
+  });
+
+  it("migrations are numbered, append-only SQL files applied in order", () => {
+    const files = readdirSync(join(root, "migrations")).sort();
+    expect(files).toEqual(["0001_init.sql", "0002_abuse_limits.sql"]);
+  });
+
+  it("wrangler.toml documents the optional limit variables (commented out: the defaults apply)", () => {
+    const toml = read("wrangler.toml");
+    expect(toml).toMatch(/^# MAX_NEW_DEVICES_PER_DAY = "50"$/m);
+    expect(toml).toMatch(/^# MAX_GLOBAL_DAILY_BYTES = "214748364800"/m);
+    expect(214_748_364_800).toBe(200 * 1024 ** 3);
+    expect(toml).not.toMatch(/^(MAX_NEW_DEVICES_PER_DAY|MAX_GLOBAL_DAILY_BYTES)\s*=/m);
   });
 });

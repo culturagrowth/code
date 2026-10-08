@@ -389,7 +389,11 @@ export function createD1Db(d1: D1Like): Db {
         await run("UPDATE clips SET bytes = MAX(0, bytes - ?1) WHERE clip_id = ?2", delta, clipId);
         return "day_limit";
       }
-      if (globalDayLimit !== undefined && !(await reserveCounter(GLOBAL_BYTES_SCOPE, day, delta, globalDayLimit))) {
+      const globalOk =
+        globalDayLimit === undefined ||
+        (await reserveCounter(GLOBAL_BYTES_SCOPE, day, delta, globalDayLimit));
+      if (!globalOk) {
+        // Undo both earlier reservations so a refused request leaves no trace.
         await run("UPDATE clips SET bytes = MAX(0, bytes - ?1) WHERE clip_id = ?2", delta, clipId);
         await run(
           "UPDATE usage SET bytes = MAX(0, bytes - ?1) WHERE device_id = ?2 AND day = ?3",

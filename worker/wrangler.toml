@@ -8,6 +8,12 @@ compatibility_date = "2026-09-01"
 ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"  # 32 hex chars, dashboard > R2 overview
 BUCKET_NAME = "duoclip-clips"                      # must equal bucket_name below
 
+# Optional circuit breakers against abuse (POST /v1/devices is open by design). Both are counted
+# per UTC day for the whole service; a missing or malformed value keeps the default shown here.
+# Once all your friends are registered, set MAX_NEW_DEVICES_PER_DAY to "0" to close registration.
+# MAX_NEW_DEVICES_PER_DAY = "50"
+# MAX_GLOBAL_DAILY_BYTES = "214748364800"          # 200 GiB announced for upload per day
+
 # Binding used for list/delete (DELETE /v1/clips/:clip and the hourly sweep).
 # Uploads and downloads never go through the Worker: clients use presigned URLs.
 [[r2_buckets]]

@@ -34,9 +34,11 @@ pub const RATE_WANDER_PPB_PER_S: f64 = 1_000.0 / 3_600.0;
 /// Minimum uncertainty given to a persisted rate ([`AppClock::with_drift_state`]): 5 ppm, the
 /// typical change of a PC crystal between a cold boot and steady operating temperature.
 pub const DRIFT_FILE_MIN_UNCERT_PPB: f64 = 5_000.0;
-/// Past segments kept for `utc_at` of earlier times. Older history is dropped (the oldest kept
-/// segment is then extrapolated backwards; monotonicity is unaffected).
-const MAX_SEGMENTS: usize = 512;
+/// Past segments kept for `utc_at` of earlier times (each update adds at most two; at 64 s
+/// polling of six sources this is about three hours). Older history is dropped: the oldest kept
+/// segment is then extrapolated backwards, which keeps the mapping monotonic but no longer
+/// reproduces the values reported back then.
+const MAX_SEGMENTS: usize = 2048;
 
 /// Synchronization state shown in the UI and written to clip metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -284,8 +286,9 @@ impl AppClock {
     ///
     /// The target becomes `utc = local + c.offset_at(now)` with rate `c.rate_ppb` (clamped to
     /// ±[`MAX_TARGET_RATE_PPB`]). A previously known rate is kept instead when `c` carries no
-    /// rate estimate (uncertainty at least the 50 ppm fallback) or a less certain one than the
-    /// known rate, whose uncertainty ages by [`RATE_WANDER_PPB_PER_S`]. Let
+    /// rate estimate (uncertainty at least the 50 ppm fallback) or a less certain but consistent
+    /// one (`|c.rate − known| <= c.rate_uncert + known_uncert`); the known rate's uncertainty
+    /// ages linearly by [`RATE_WANDER_PPB_PER_S`]. Let
     /// `err = target_utc(now) − utc_at(now)`:
     ///
     /// - if `|err| > step_threshold_ns` and (`allow_step` or the state is UNSYNCED), the clock
@@ -294,28 +297,41 @@ impl AppClock {
     ///   `correction = clamp(err / slew_horizon, ±max_slew)`, until `err` is consumed; then it
     ///   continues at the target rate. Earlier segments are kept, so the mapping stays
     ///   continuous and monotonic.
+    ///
+    /// An update never rewrites the mapping before the previous update: a `now_local` older
+    /// than the last update (e.g. computed before a lock and applied after a newer update) is
+    /// applied at the last update's time instead. Monotonicity of readings is guaranteed for
+    /// `utc_at(t)` calls with `t` not after the `now_local` of the next update, i.e. reading the
+    /// live clock at the current monotonic time; for future instants use [`AppClock::freeze`].
     pub fn update(&mut self, c: &Combined, now_local: i64, allow_step: bool) {
         let unsynced = self.last_update_local.is_none();
+        let now_local = match self.last_update_local {
+            Some(last) => now_local.max(last),
+            None => now_local,
+        };
         let c_rate_uncert = if c.rate_uncert_ppb.is_finite() && c.rate_uncert_ppb >= 0.0 {
             c.rate_uncert_ppb
         } else {
             FALLBACK_RATE_UNCERT_PPB
         };
         let c_has_rate = c.rate_ppb.is_finite() && c_rate_uncert < FALLBACK_RATE_UNCERT_PPB;
-        // A previously known rate, its uncertainty aged by the frequency wander.
+        let c_rate = sanitize_rate(c.rate_ppb).clamp(-MAX_TARGET_RATE_PPB, MAX_TARGET_RATE_PPB);
+        // A previously known rate, its uncertainty aged by the frequency wander since it was
+        // last assessed (`rate_at_local`, moved to `now` below so the aging is not compounded).
         let kept_uncert = self.rate_uncert_ppb
             + RATE_WANDER_PPB_PER_S
                 * ((now_local as i128 - self.rate_at_local as i128).unsigned_abs() as f64 / 1e9);
-        let keep = self.rate_known && (!c_has_rate || c_rate_uncert > kept_uncert);
+        // A measured rate outside the kept rate's range proves the kept one wrong (e.g. a drift
+        // file from a cold machine): never keep it against such evidence.
+        let consistent =
+            !c_has_rate || (c_rate - self.target.rate_ppb).abs() <= c_rate_uncert + kept_uncert;
+        let keep = self.rate_known && consistent && (!c_has_rate || c_rate_uncert > kept_uncert);
         let (target_rate, rate_uncert) = if keep {
             (self.target.rate_ppb, kept_uncert)
         } else {
-            self.rate_at_local = now_local;
-            (
-                sanitize_rate(c.rate_ppb).clamp(-MAX_TARGET_RATE_PPB, MAX_TARGET_RATE_PPB),
-                c_rate_uncert,
-            )
+            (c_rate, c_rate_uncert)
         };
+        self.rate_at_local = now_local;
 
         // Target at now, from the combined estimate (extrapolated with its own rate).
         let offset_now = c.offset_at(now_local) as i128;

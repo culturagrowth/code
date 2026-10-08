@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   authenticate,
   canonicalString,
@@ -70,6 +70,22 @@ describe("Ed25519 signature malleability", () => {
     forged.set(signatureWithScalar(scalar + L).slice(32), 32);
     expect(hasCanonicalScalar(forged)).toBe(false);
     expect(await verifySignature(alice.publicKeyB64, forged, message)).toBe(false);
+  });
+
+  it("does not depend on the runtime's verifier being strict", async () => {
+    const h = createHarness();
+    const alice = await h.device(1);
+    const message = canonicalString("GET", "/v1/health", T0, await sha256Hex(utf8("")));
+    const forged = signatureWithScalar(L + 5n);
+    // A lax verifier that accepts everything, like a non-strict Ed25519 implementation.
+    const lax = vi.spyOn(crypto.subtle, "verify").mockResolvedValue(true);
+    try {
+      expect(await verifySignature(alice.publicKeyB64, forged, message)).toBe(false);
+      expect(lax).not.toHaveBeenCalled();
+      expect(await verifySignature(alice.publicKeyB64, signatureWithScalar(5n), message)).toBe(true);
+    } finally {
+      lax.mockRestore();
+    }
   });
 });
 
@@ -368,7 +384,7 @@ describe("SQL injection", () => {
     for (const code of ["' OR '1'='1", "A' OR 1=1--", "ABCDEFGHIJ'; --"]) {
       expect((await alice.call("POST", "/v1/crews/join", { code })).status).toBe(400);
     }
-    const members = await alice.call("GET", `/v1/crews/${crew_id}/members?x=${encodeURIComponent("' OR 1=1")}`);
+    const members = await alice.call("GET", `/v1/crews/${crew_id}/members?x=%27%20OR%201%3D1`);
     expect(members.status).toBe(200);
     expect(h.d1.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('crews', 'devices')")).toHaveLength(2);
   });

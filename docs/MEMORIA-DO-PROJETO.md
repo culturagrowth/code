@@ -211,26 +211,36 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 ### Feito e no GitHub
 
 - `docs/`: pesquisa v2 + anexo + este arquivo.
-- Workspace Cargo (`Cargo.toml`, `Cargo.lock`, `.gitignore`, `README.md`), com os crates:
-  - `crates/duoclip-proto`: protocolo de mensagens, validação e nomes das chaves (SPEC pronto);
-  - `crates/duoclip-clock`: relógio global (SPEC pronto, o mais detalhado);
-  - `crates/duoclip-buffer`: ring buffer + pós-roll "fixar e coletar" (SPEC pronto);
-  - `crates/duoclip-crypto`: criptografia ponta a ponta + chunker (SPEC pronto);
-  - `worker/SPEC.md`: Cloudflare Worker (SPEC pronto).
+- Workspace Cargo (`Cargo.toml`, `Cargo.lock`, `.gitignore`, `README.md`, `CLAUDE.md`).
+- **Fase A CONCLUÍDA (08/10/2026).** Implementada por agentes e revisada adversarialmente: sonnet para proto, crypto e worker; opus para clock e buffer.
+  - `crates/duoclip-proto`: mensagens (ClipRequest, ClipAck, ClipExtend, TimePing/Pong, RangeRequest, ChunkAvailable, ClipKey...),
+    validação rígida (ids só em UUID minúsculo canônico), codec JSON com limite de 64 KiB e nomes das chaves no bucket.
+  - `crates/duoclip-crypto`: `ClipKey` (zeroize), AES-256-GCM por bloco com AAD (`DCC1`), manifesto cifrado (`DCM1`) com checagens,
+    e Chunker (o último bloco sempre sai marcado `is_last`).
+  - `crates/duoclip-clock`: Relógio Global. Pacotes SNTP com pivô de 2036, estimador por fonte com **limite de erro rigoroso**
+    (pior caso, ≥ 99% em simulação), Marzullo (descarta "falsetickers"), AppClock só com slew, epochs e holdover, remapeamento de
+    dois lados, checagem cruzada P2P, cliente SNTP e agendador com KoD. **NTS ainda não está implementado** (só SNTP).
+  - `crates/duoclip-buffer`: ring buffer de pacotes codificados + "fixar e coletar" (pós-roll), fragmentos por GOP, cobertura e lacunas,
+    extensão, timeout, fim de fonte, gerador sintético e testes adversariais.
+  - `worker/`: Cloudflare Worker (TypeScript) com auth Ed25519 e anti-replay, crews e convites, registro de clipes, URLs
+    pré-assinadas do R2 que **assinam `Content-Length`**, cotas e disjuntores contra abuso, e varredura de hora em hora.
+    Migrations D1 `0001` e `0002`. README em português com o passo a passo de deploy.
+  - **Verificação final:** 244 testes Rust passando (1 ignorado: precisa de UDP 123), clippy `-D warnings` limpo, `cargo fmt` ok,
+    `cargo check --target x86_64-pc-windows-gnu` ok; Worker: `tsc` ok e 312 testes passando.
+  - Os desvios aceitos em relação aos SPECs estão no fim de cada `SPEC.md` ("Implementation notes"). **Leia antes de integrar.**
+    Destaques: o cliente precisa enviar o PUT com o `content_length` exato e `manifest_size`; `AppClock::freeze()` devolve a linha-alvo;
+    configurar só as faixas de áudio ativas no buffer.
 
-### Em andamento quando este arquivo foi escrito
+### Em andamento / pendente desta sessão
 
-- **Workflow "Fase A"** (agentes): implementar `duoclip-proto` + `duoclip-crypto` (sonnet), `worker/` (sonnet), `duoclip-clock` (opus)
-  e `duoclip-buffer` (opus), cada um com revisão adversarial e correção.
-  Pode haver commits **"WIP (Fase A em andamento)"** com código parcial desses crates. **Se o último commit da Fase A não for o de conclusão, ou se `cargo test --workspace` falhar, a Fase A não terminou:** termine ou refaça seguindo os `SPEC.md`.
-- **Workflow de pesquisa de captura sem borda no Windows 10:** compara Desktop Duplication recortado × DWM shared surface × hook,
-  com uma tabela de anti-cheat por jogo popular no Brasil. Quando terminar, atualizar a seção 4 do documento de pesquisa.
+- **Pesquisa de captura sem borda no Windows 10** (workflow de pesquisa): compara Desktop Duplication recortado × DWM shared surface × hook,
+  com uma tabela de anti-cheat por jogo. Se o resultado não estiver no documento de pesquisa, refaça essa pesquisa antes da Fase B.
 
 ### Próximos passos (roadmap)
 
 | Fase | O que fazer |
 |---|---|
-| **A** (em andamento) | proto, crypto, worker, clock e buffer implementados e testados no Linux. Checagem cruzada `cargo check --target x86_64-pc-windows-gnu`. |
+| **A** ✅ concluída | proto, crypto, worker, clock e buffer implementados, revisados e testados (244 testes Rust + 312 do Worker). |
 | **B** (precisa de Windows para testar) | `duoclip-capture` (trait `CaptureBackend`, backend **dda_crop** e backend **wgc**; hook só como stub), `duoclip-audio` (WASAPI process loopback: jogo + Discord + mic), `duoclip-encode` (FFmpeg/NVENC/AMF/QSV com textura D3D11), escritor de **bucket local fMP4**, teste da borda no Win11 e **benchmark PresentMon comparando com o Medal** |
 | **C** | Rede: WebRTC + Worker (signaling) + upload e download cifrados no R2. Integração com o relógio global e o protocolo. |
 | **D** | App **Tauri 2**: bandeja, tecla de clipe, amigos e crews, indicador "±X ms", editor com POVs sincronizados e exportação |

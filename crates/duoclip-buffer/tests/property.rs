@@ -68,6 +68,7 @@ struct Scenario {
     frags: HashMap<Uuid, Vec<Fragment>>,
     accepted: Vec<Uuid>,
     next_id: u128,
+    oracle: Oracle,
 }
 
 impl Scenario {
@@ -86,8 +87,17 @@ impl Scenario {
 
     fn drain(&mut self) {
         for (id, f) in self.mgr.drain_fragments() {
+            if self.mgr.is_active(id) {
+                self.oracle.check_ready(&f);
+            }
             self.frags.entry(id).or_default().push(f);
         }
+    }
+
+    fn tick(&mut self, now: i64) {
+        let done = self.mgr.tick(now);
+        self.oracle.observe(&self.mgr);
+        self.collect_finished(done);
     }
 
     fn random_request(&mut self, now: i64) {
@@ -95,10 +105,11 @@ impl Scenario {
         let off = rng.range_i64(-5 * S, 5 * S);
         let map = move |u: i64| u.saturating_add(off);
         // Mostly "pressed just now" (own hotkey or a prompt friend request), sometimes late.
-        let hotkey_local = if rng.chance(7, 10) {
-            now + rng.range_i64(-S, 2 * S)
-        } else {
-            now + rng.range_i64(-40 * S, 0)
+        // Mostly "pressed just now", sometimes late, rarely far ahead (friend clock off).
+        let hotkey_local = match rng.below(20) {
+            0..=13 => now + rng.range_i64(-S, 2 * S),
+            14..=18 => now + rng.range_i64(-40 * S, 0),
+            _ => now + rng.range_i64(10 * S, 60 * S),
         };
         let req = WindowRequest {
             hotkey_utc_ns: hotkey_local - off,
@@ -114,7 +125,10 @@ impl Scenario {
         let id = Uuid::from_u128(self.next_id);
         let collecting = self.mgr.active_windows().len();
         match self.mgr.request(id, window, now) {
-            Ok(true) => self.accepted.push(id),
+            Ok(true) => {
+                self.accepted.push(id);
+                self.oracle.requested(id, window.into(), self.mgr.ring());
+            }
             Ok(false) => panic!("fresh id reported as duplicate"),
             Err(BufferError::TooManyActive) => {
                 assert_eq!(collecting, self.max_active);
@@ -132,6 +146,7 @@ fn run_scenario(seed: u64) -> Stats {
     let cfg = random_stream(&mut rng, seed);
     let start = cfg.start_ns;
     let tracks = cfg.tracks();
+    let oracle = Oracle::new(&tracks);
     let mut stream = SynthStream::new(cfg);
     let max_duration = rng.range_i64(5 * S, 60 * S);
     let max_bytes = if rng.chance(1, 3) {
@@ -166,6 +181,7 @@ fn run_scenario(seed: u64) -> Stats {
         frags: HashMap::new(),
         accepted: Vec::new(),
         next_id: 0,
+        oracle,
     };
     let end = start + 90 * S;
     let mut last_now = start;
@@ -174,7 +190,10 @@ fn run_scenario(seed: u64) -> Stats {
             break;
         }
         last_now = now;
-        sc.mgr.push(p, now).expect("synthetic packets are valid");
+        sc.mgr
+            .push(p.clone(), now)
+            .expect("synthetic packets are valid");
+        sc.oracle.pushed(&p);
         let ring = sc.mgr.ring();
         assert!(ring.duration_ns() <= max_duration || ring.gop_count() <= 1);
         assert!(ring.bytes() <= max_bytes || ring.gop_count() <= 1);
@@ -221,6 +240,7 @@ fn run_scenario(seed: u64) -> Stats {
             }
         } else if r < 75 {
             sc.mgr.source_ended(now);
+            sc.oracle.observe(&sc.mgr);
         } else if r < 85 && now > start + 2 * S {
             let bad = Packet {
                 track: TrackId(200),
@@ -246,15 +266,13 @@ fn run_scenario(seed: u64) -> Stats {
             );
         }
         if sc.rng.chance(1, 3) {
-            let done = sc.mgr.tick(now);
-            sc.collect_finished(done);
+            sc.tick(now);
         }
         if sc.rng.chance(1, 5) {
             sc.drain();
         }
     }
-    let done = sc.mgr.tick(last_now + 1_000 * S);
-    sc.collect_finished(done);
+    sc.tick(last_now + 1_000 * S);
     sc.drain();
     assert!(sc.mgr.active_windows().is_empty());
     assert_eq!(
@@ -269,6 +287,7 @@ fn run_scenario(seed: u64) -> Stats {
     );
     for (id, clip) in &sc.clips {
         check_clip(clip, sc.max_len);
+        sc.oracle.check(clip);
         let frags = sc.frags.get(id).map(Vec::as_slice).unwrap_or(&[]);
         check_fragments(frags, clip);
         let st = &mut sc.stats;

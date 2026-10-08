@@ -41,11 +41,11 @@ pub fn two_sided_mapping(
         .copied()
         .collect();
     let kept = select(window.iter(), cfg);
-    let f = fit(&kept, &window, cfg, None)?;
-
     let mid = sat_i64(start + (end - start) / 2);
+    let f = fit(&kept, &window, cfg, None)?.centered_at(mid);
+
     let bound_ns = f.bound_over(sat_i64(start), sat_i64(end));
-    let rate_ppb = f.rate_ppb;
+    let rate_ppb = f.rate_ppb();
     let offset_mid = f.into_estimate(mid).offset_at(mid);
     Some(FrozenMapping {
         ref_local_ns: mid,
@@ -115,7 +115,7 @@ mod tests {
         let samples = [mk(0, 2 * MS), mk(10 * SEC, 200 * MS), mk(20 * SEC, 2 * MS)];
         let m = two_sided_mapping(&samples, 0, 20 * SEC, 0, &FilterConfig::default()).unwrap();
         assert_eq!(m.ref_local_ns, 10 * SEC);
-        let expect = MS + 1_000 + 500_000;
+        let expect = MS + 1_200 + 500_000;
         assert!(
             (m.bound_ns - expect).abs() <= 2,
             "{} vs {expect}",
@@ -160,7 +160,7 @@ mod tests {
         assert!(two_sided_mapping(&[], 0, 0, 0, &cfg).is_none());
         // One sample before the clip: the far end is 20 s away (50 ppm fallback -> +1 ms).
         let m = two_sided_mapping(&samples, 10 * SEC, 20 * SEC, 60 * SEC, &cfg).unwrap();
-        assert_eq!(m.bound_ns, MS / 2 + 1_000 + 1_000_000);
+        assert_eq!(m.bound_ns, MS / 2 + 1_100 + 1_000_000);
         let _ = two_sided_mapping(&samples, i64::MIN, i64::MAX, i64::MAX, &cfg);
     }
 }
