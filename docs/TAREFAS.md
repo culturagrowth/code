@@ -33,13 +33,9 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 16 | Decisão do usuário sobre o bucket `povclip` | C | — | Usuário | — | concluída | — | 08/10: o bucket **não guarda mais nada** de outro app; a regra de ciclo de vida em `clips/` (expirar em 3 dias, abortar multipart em 1 dia) pode ser aplicada. Aplicar pelo Wrangler falhou (`code 10042`, "enable R2 through the Dashboard"); fazer pelo painel ou junto do deploy |
 | 18 | Revisão cruzada da captura implementada pelo Claude (tarefa 9) | B2 | só `docs/revisoes/` | GPT | GPT | concluída | `gpt/revisao-duoclip-capture` | Segunda rodada concluída em 9b62edb: relatório c25d97e / GPT019, aprovado com ressalvas. Captura real não executada pelo GPT; autor mantém implementação na tarefa 9 Integrada no merge `66f6cc3` |
 
+| 19 | Comando de teste do fluxo de grupo com dois participantes: cadastro, convite e presença | C | `worker/tools/crew-smoke.ts`, teste correspondente, scripts e documentação Worker | GPT | Claude | em revisão | `gpt/crew-smoke` | Entrega d871a2f / GPT022; comando test:crew, fluxo HTTP local passou, 375 testes Worker + typecheck; sem captura/R2. Não altera tarefa 17 |
+
 ## Concluídas
-
-Tarefa adicional em andamento:
-
-| # | Tarefa | Fase | Escopo | Dono | Revisor | Status | Branch | Notas |
-|---|---|---|---|---|---|---|---|---|
-| 19 | Comando de teste do fluxo de grupo com dois participantes: cadastro, convite e presença | C | `worker/tools/crew-smoke.ts`, teste correspondente, scripts e documentação Worker | GPT | Claude | em andamento | `gpt/crew-smoke` | Teste prático local, sem captura ou credenciais R2; não altera o adaptador de presença da tarefa 17 |
 
 | # | Tarefa | Dono | Revisor | Branch / commit | Resumo |
 |---|---|---|---|---|---|
