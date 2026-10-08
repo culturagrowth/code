@@ -293,24 +293,20 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 
 ### Em andamento / pendente
 
-**Comunicação direta e organização local (decisão do usuário em 08/10/2026):**
+**Decisões de comunicação e organização (usuário, 08/10/2026):**
 
 - Claude e GPT trocam entregas, revisões e respostas pelos arquivos, sem retransmissão do usuário.
-  Protocolo em [`COMUNICACAO-AGENTES.md`](COMUNICACAO-AGENTES.md), branch `gpt/comunicacao-agentes`, tarefa 14.
-  A caixa canônica fica sempre em `C:\Users\bolad\Projetos\duoclip\docs\comunicacao`, mesmo ao trabalhar em outra branch.
-- A pasta principal continua em `C:\Users\bolad\Projetos\duoclip`; todos os worktrees foram reunidos em `worktrees/`:
-  `gpt-worker-presenca`, `gpt-worker-r2`, `gpt-comunicacao` e `claude-duoclip-session`.
-  Use essa pasta também para novos worktrees. As credenciais permanecem no arquivo ignorado `worker/.dev.vars` da pasta principal.
-- Tarefa 10 entregue na branch `gpt/worker-presenca`, HEAD `48c0f8a`; código testado em `5573717`: 355 testes Worker e 374 Rust.
-  Pedido de revisão ao Claude: `docs/comunicacao/para-claude/2026-10-08-gpt-001-worker-presenca.md` na pasta principal.
-- Tarefa 13 entregue na branch `gpt/worker-r2`, HEAD `fddcf27`: 321 testes Worker e 374 Rust; R2 real validado pelo usuário
-  com os status `404, 200, 200, 403, 204, 404` e limpeza concluída. O usuário consultou o D1 pelo Wrangler com sucesso:
-  `duoclip`, ID `696b75a4-5499-402d-8076-d20c16f52ac7`, região `ENAM`, 0 tabelas. Migrações remotas e deploy pendentes.
-  Pedido de revisão ao Claude: `docs/comunicacao/para-claude/2026-10-08-gpt-002-worker-r2.md`.
-- A caixa usa um arquivo novo por mensagem e confirmações do próprio destinatário. Publicar um arquivo não acorda outra sessão;
-  agentes ativos consultam a caixa antes, entre etapas e depois do trabalho. Os pedidos ao Claude ainda aguardam suas respostas.
-- A configuração foi disponibilizada localmente na pasta principal antes da integração da branch de documentação para permitir leitura imediata.
-  Preserve mensagens novas ao integrar. As branches Worker continuam separadas até a revisão cruzada.
+  Protocolo em [`COMUNICACAO-AGENTES.md`](COMUNICACAO-AGENTES.md); caixa física em
+  `C:\Users\bolad\Projetos\duoclip\docs\comunicacao`, compartilhada por todos os worktrees.
+- A pasta principal permanece na branch de integração. Implementação e revisão usam worktrees próprios dentro de `worktrees/`.
+  O revisor usa sua própria branch e usuário do Windows, sem alterar o worktree do autor ou `safe.directory`.
+  Credenciais ficam no arquivo ignorado `worker/.dev.vars` da pasta principal.
+- A caixa tem um arquivo novo por mensagem, sequência por remetente/dia e confirmações do próprio destinatário.
+  Gravar um arquivo não acorda outra sessão. Agentes ativos consultam a caixa entre etapas do trabalho.
+- O bucket escolhido pelo usuário é `povclip`, dedicado ao DuoClip. O usuário confirmou que não guarda mais dados de outro uso
+  e autorizou a regra de ciclo de vida no prefixo `clips/` (expirar em 3 dias e abortar multipart em 1 dia).
+- O estado atual fica no [`quadro de tarefas`](TAREFAS.md), na [`caixa`](comunicacao/README.md) e nos
+  [relatórios de revisão](revisoes/README.md). SHAs recentes, resultados de testes e recebimentos não são duplicados aqui.
 
 1. **Terminar a B1:**
    - revisar o gamesdb;
@@ -355,8 +351,8 @@ Os diagnósticos ficam no crate `crates/duoclip-smoke` (`sysinfo`, `audio_probe`
    ainda não rodou: o usuário pulou a captura de tela.) A máquina de teste tem **HDR no monitor principal e um monitor girado 90°**, e o DDA precisa tratar os dois.
 5. ❌ Borda do WGC no Windows 11: sem pacote, com a configuração do Windows ligada, e com MSIX/pacote esparso. (No 26300, `IsBorderRequired` e `GraphicsCaptureAccess` existem.)
 6. ❌ "Teste do flash" do relógio global entre dois PCs (meta ≤ 1 frame). (O teste SNTP contra `time.cloudflare.com` passou no Windows.)
-7. 🟡 Cloudflare: ✅ presigner contra R2 real validado pelo usuário, com limpeza concluída; ✅ consulta do D1 pelo Wrangler.
-   ❌ migrações D1 e Worker publicado ainda pendentes (relatório em `gpt/worker-r2:worker/R2-VALIDACAO.md`).
+7. **Cloudflare:** instruções no `worker/README.md`; evidências do R2 em `gpt/worker-r2:worker/R2-VALIDACAO.md`.
+   Consulte o quadro de tarefas e a caixa para o estado atual das migrações, revisão e publicação.
 8. Opcional: teste "caixa-preta" do Medal 2026 (`tasklist /m medal-hook64.dll` e os logs em `%AppData%\Medal`).
 
 ## 7. Como retomar em outro ambiente
