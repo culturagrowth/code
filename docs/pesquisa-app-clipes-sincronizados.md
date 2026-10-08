@@ -769,10 +769,10 @@ duoclip/
 |---|---|---|
 | **0 — Provas de conceito** | (a) **Desktop Duplication recortado** e WGC → NVENC/AMF/QSV, com **benchmark PresentMon** (comparar com o Medal ligado no mesmo jogo); (b) process loopback do jogo e do Discord; (c) **teste da borda** (sem pacote, configuração do Win11, MSIX); (d) protótipo do AppClock com NTS | FPS < 5% de perda e no nível do Medal. Sem borda no Win10 e no Win11. AppClock ≤ 8 ms contra o NTP.br. |
 | **1 — Clipador local** | Bandeja, ring buffer, **pós-roll "fixar e coletar"**, buckets locais fMP4, faixas separadas | Clipe pronto ≤ 1 s após o fim do pós-roll. Sobrevive a um crash. |
-| **2 — Relógio global + dupla** | NTS + P2P híbrido, estados, indicador "±X ms", pareamento de amigos | Teste do flash ≤ 1 frame (P95) em fibra |
+| **2 — Relógio global + grupo** | NTS + P2P híbrido entre todos da sessão (até 8), estados, indicador "±X ms", grupos e sessão automática | Teste do flash ≤ 1 frame (P95) em fibra |
 | **3 — Clipe remoto + bucket** | `ClipRequest`, Worker, R2, criptografia de ponta a ponta, prévia, expiração | Do aperto até a prévia aberta < 20 s com 20 Mbps de upload |
 | **4 — Editor e exportação** | Layouts, mixer, ajuste fino, exportação por hardware | Exportação de 15 s < 10 s numa GPU média |
-| **5 — Produto** | Instalador/atualização, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), grupos de 3–5 | Em uso pelo grupo |
+| **5 — Produto** | Instalador/atualização, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), sessões de 3 a 8 pessoas, vários grupos | Em uso pelos grupos |
 | **6 — Modo hook opcional** | Componente `duoclip-hook` separado e assinado, só para jogos sem anti-cheat do banco, ativado jogo a jogo, com volta automática ao modo sem injeção | Mais leve que o modo padrão no benchmark, sem crashes nos jogos liberados |
 
 ---

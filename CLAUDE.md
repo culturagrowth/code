@@ -32,3 +32,5 @@ Arquitetura completa: [`docs/pesquisa-app-clipes-sincronizados.md`](docs/pesquis
 - **Pós-roll "fixar e coletar":** 30 s antes, 10 s depois e ±2 s de margem.
 - **Bucket na nuvem = Cloudflare R2**, com criptografia ponta a ponta, expiração ≤ 72 h e URLs assinadas pelo Worker.
 - Uso **privado entre amigos:** sem tela de consentimento e sem exigências jurídicas extras.
+- **Grupos, não dupla:** cada pessoa pode estar em vários grupos isolados. A **sessão é automática** (membros do mesmo grupo, com o app aberto
+  e no mesmo jogo; pergunta quando houver dois grupos online) e suporta **até 8 pessoas**. O clipe vai só para quem está na sessão.

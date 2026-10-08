@@ -46,6 +46,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 | 13 | "Armazene em um arquivo de memória tudo que for importante" | Este arquivo + `CLAUDE.md` na raiz |
 | 14 | "Pode atualizar tudo da memória de novo, agora que acabou de aplicar" | Memória, documentos e anexo atualizados com a Fase B1 parcial e a pesquisa da rodada 3. Pesquisas brutas e scripts dos agentes guardados no repositório. |
 | 15 | "Crie também um prompt para eu mandar para o meu Claude Code no CLI para puxar tudo e realizar o teste do app" | [`docs/PROMPT-CLAUDE-CODE-LOCAL.md`](PROMPT-CLAUDE-CODE-LOCAL.md) |
+| 16 | "Quero que funcione com quantos amigos eu quiser jogando junto; tenho 2 grupos diferentes, jogo com um num dia e com o outro no outro; às vezes 6, às vezes 3; sem um interferir no outro" | **Grupos e sessões** (4.7): vários grupos isolados, **sessão automática** e sessões de **até 8 pessoas** |
 
 ## 3. Preferências do usuário
 
@@ -190,6 +191,21 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
   - upload de 5 Mbps ou mais.
 - **Distribuição entre amigos:** instalador próprio basta. A Microsoft Store é opcional (cadastro grátis desde 09/2025).
 
+### 4.7 Grupos e sessões (decisão de 08/10/2026)
+
+- **Não é um app de dupla.** Cada pessoa pode estar em **vários grupos** ("crews"; o Worker já tem `crew_members` muitos-para-muitos).
+  Os grupos são **isolados**: o clipe pertence a um grupo (`crew_id`), as chaves no R2 começam com `clips/{crew}/` e só membros recebem as URLs.
+- **Sessão de jogo automática** (ainda não implementada, entra na Fase C):
+  - a sessão junta sozinha os membros do **mesmo grupo** que estão com o app aberto **e no mesmo jogo** (pelo banco de jogos);
+  - o clipe vai **só para quem está na sessão**: se 3 dos 6 estão jogando, só esses 3 participam; quem não está não recebe nada;
+  - se a pessoa está em 2 grupos com membros online nos dois, o app **pergunta** qual usar e lembra a escolha;
+  - um amigo que entra no meio da sessão passa a participar dos próximos clipes (não dos que já estavam coletando).
+- **Tamanho:** sessões de **até 8 pessoas** são suportadas e testadas. Os grupos de uso real têm de 3 a 6.
+  - Rede: P2P entre todos (até 28 conexões) só para controle e relógio. Os arquivos vão pelo bucket, e cada pessoa sobe o próprio POV uma vez.
+    Download por clipe com 6 pessoas ≈ 5 × 16,5 MB (prévias 720p).
+  - Relógio: o refino P2P usa todos os pares disponíveis da sessão.
+  - Editor: layouts para N POVs (grade, foco + miniaturas, cortes alternados) e a regra de áudio de 3+ pessoas (uma faixa do Discord como "mestre").
+
 ## 5. Principais fatos da pesquisa (para não refazer)
 
 - **OBS** (código conferido, commit `c5bcbca`):
@@ -291,8 +307,8 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 | **A** ✅ concluída | proto, crypto, worker, clock e buffer implementados, revisados e testados |
 | **B1** 🟡 parcial | gamesdb ✅ (falta a revisão) · mux 🟡 · áudio 🟡 · encode ❌ |
 | **B2** | `duoclip-capture` (dda_crop + wgc + stub do hook), bucket local fMP4 integrado, **benchmark PresentMon comparando com o Medal** e teste da borda no Win11 |
-| **C** | Rede: WebRTC + Worker (signaling) + upload e download cifrados no R2. Integração com o relógio global e o protocolo. |
-| **D** | App **Tauri 2**: bandeja, tecla de clipe, amigos e crews, indicador "±X ms", editor com POVs sincronizados e exportação |
+| **C** | Rede: WebRTC + Worker (signaling) + upload e download cifrados no R2. Integração com o relógio global e o protocolo. **Sessão automática por grupo, até 8 pessoas** (4.7). |
+| **D** | App **Tauri 2**: bandeja, tecla de clipe, amigos e **vários grupos**, escolha de grupo quando houver conflito, indicador "±X ms", editor com **até 8 POVs** sincronizados e exportação |
 | **E** | Banco de jogos remoto, testes com anti-cheats (Vanguard, EAC, BattlEye, FACEIT, Gamers Club), instalador e atualização |
 | **F (futuro, fora do MVP)** | Modo **hook opcional** (`duoclip-hook`), só para o Minecraft Java no começo, depois de medir |
 
