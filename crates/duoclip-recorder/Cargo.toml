@@ -1,0 +1,53 @@
+[package]
+name = "duoclip-recorder"
+description = "DuoClip local recorder: records the game (video + mixed audio) and saves MP4 clips on a hotkey"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "duoclip-recorder"
+path = "src/main.rs"
+
+[dependencies]
+duoclip-audio = { path = "../duoclip-audio" }
+duoclip-buffer = { path = "../duoclip-buffer" }
+duoclip-capture = { path = "../duoclip-capture" }
+duoclip-encode = { path = "../duoclip-encode" }
+duoclip-gamesdb = { path = "../duoclip-gamesdb" }
+duoclip-mux = { path = "../duoclip-mux" }
+thiserror.workspace = true
+toml = "0.9"
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = [
+  "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Console",
+  "Win32_System_Performance",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+# The ignored end-to-end test creates and animates its own window.
+[target.'cfg(windows)'.dev-dependencies.windows]
+workspace = true
+features = [
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_WindowsAndMessaging",
+]
