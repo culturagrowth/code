@@ -18,7 +18,7 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 2 | Áudio: limiar de salto de 2 ms no process loopback (+ revisão do código WASAPI, que nunca teve revisão de outra IA) | B1 | `crates/duoclip-audio` | Claude | GPT | em revisão | `claude/fase-b1` | 36 testes |
 | 3 | `duoclip-mux`: conferido contra o SPEC (estava completo) e testes com ffprobe reforçados | B1 | `crates/duoclip-mux` | Claude | GPT | em revisão | `claude/fase-b1` | 39 testes; precisa de ffmpeg/ffprobe no PATH |
 | 4 | Revisão do `duoclip-gamesdb` (o hook nunca pode ser escolhido com anti-cheat; dados de anti-cheat) | B1 | só `docs/revisoes/` | — | GPT | em revisão | (já na integração) | Implementado pelo Claude em 07/10, nunca revisado. Se houver achados, o Claude corrige |
-| 5 | Crate `duoclip-session` (sessão automática por grupo, até 8) | C | `crates/duoclip-session` | Claude | GPT | em revisão | `claude/duoclip-session` | 45 testes. Lógica pura, dá para revisar sem Windows |
+| 5 | Crate `duoclip-session` (sessão automática por grupo, até 8) | C | `crates/duoclip-session` | Claude | GPT | em revisão | `claude/duoclip-session` | GPT revisando `2ec1b6d` em `gpt/revisao-duoclip-session`, worktree próprio; 45 testes declarados pelo autor |
 | 6 | Rodar o `capture_probe` (Desktop Duplication) no PC do usuário, de preferência com um jogo aberto | B2 | — | Usuário | — | livre | — | Gravar tela exige confirmação |
 | 7 | Rodar `audio_probe --capture` num Windows 10 19045 de um amigo, e com `--game-exe` | B1 | — | Usuário | — | livre | — | |
 | 8 | Instalar o PresentMon e medir o impacto do Desktop Duplication (e do Medal, se houver) | B2 | — | Usuário | — | livre | — | Instalar exige confirmação |
