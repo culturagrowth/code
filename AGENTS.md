@@ -56,7 +56,7 @@ O usuário divide tarefas entre o Claude e o GPT. Para não haver conflito:
 3. **Escopo por pasta.** Cada tarefa diz quais pastas pode alterar (normalmente um crate ou o `worker/`). Fora delas, só leitura.
    Mudanças em arquivos compartilhados (`Cargo.toml` da raiz, `Cargo.lock`, `AGENTS.md`, `docs/MEMORIA-DO-PROJETO.md`) ficam no fim da
    tarefa, em commit separado, para facilitar o merge.
-4. **Entrega:** checagens passando, `docs/TAREFAS.md` atualizado (status `em revisão`, branch, resumo), notas no SPEC e, se houve decisão,
+4. **Entrega:** checagens passando, `docs/TAREFAS.md` atualizado **na branch de integração** (status `em revisão`, branch, resumo), notas no SPEC e, se houve decisão,
    na memória. Mensagens de commit em português. A branch fica esperando a revisão da outra IA.
 5. **Revisão cruzada obrigatória (decisão do usuário):** **quem implementa não revisa o próprio trabalho.** O GPT revisa o que o Claude
    fez, e o Claude revisa o que o GPT fez. Não use subagentes da mesma IA como "revisão": isso não substitui a revisão da outra.

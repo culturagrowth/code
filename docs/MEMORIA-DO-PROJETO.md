@@ -308,7 +308,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 | Fase | O que fazer |
 |---|---|
 | **A** ✅ concluída | proto, crypto, worker, clock e buffer implementados, revisados e testados |
-| **B1** 🟡 parcial | gamesdb ✅ (falta a revisão) · mux 🟡 · áudio 🟡 · encode ❌ |
+| **B1** 🟢 implementada, em revisão pelo GPT | encode ✅ (validado com NVENC) · áudio ✅ (limiar de 2 ms) · mux ✅ · gamesdb ✅ — branch `claude/fase-b1`, ver `docs/TAREFAS.md` |
 | **B2** | `duoclip-capture` (dda_crop + wgc + stub do hook), bucket local fMP4 integrado, **benchmark PresentMon comparando com o Medal** e teste da borda no Win11 |
 | **C** | Rede: WebRTC + Worker (signaling) + upload e download cifrados no R2. Integração com o relógio global e o protocolo. **Sessão automática por grupo, até 8 pessoas** (4.7). |
 | **D** | App **Tauri 2**: bandeja, tecla de clipe, amigos e **vários grupos**, escolha de grupo quando houver conflito, indicador "±X ms", editor com **até 8 POVs** sincronizados e exportação |
