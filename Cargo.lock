@@ -231,6 +231,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "duoclip-session"
+version = "0.1.0"
+dependencies = [
+ "duoclip-proto",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "duoclip-smoke"
 version = "0.1.0"
 dependencies = [
