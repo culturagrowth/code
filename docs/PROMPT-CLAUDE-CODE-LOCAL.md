@@ -12,7 +12,7 @@ porque é lá que captura, áudio e encoder rodam de verdade). Rode o Claude Cod
 Você vai baixar e testar o projeto DuoClip no meu PC. Responda sempre em português do Brasil.
 
 ## 0. Contexto
-- Repositório: https://github.com/culturagrowth/code — branch: claude/sync-gameplay-clip-app-xpgfwx
+- Repositório: https://github.com/nicolaspercio1/code — branch: claude/sync-gameplay-clip-app-xpgfwx
 - Antes de qualquer coisa, leia o CLAUDE.md da raiz e o docs/MEMORIA-DO-PROJETO.md, porque eles têm todas as decisões e o estado atual.
   Leia também os SPEC.md dos crates que for testar.
 - Regras que não podem ser quebradas:
@@ -23,7 +23,7 @@ Você vai baixar e testar o projeto DuoClip no meu PC. Responda sempre em portug
   - antes de gravar tela, áudio ou microfone, me avise e espere eu confirmar.
 
 ## 1. Obter o código
-- Se a pasta `code` não existir: `git clone https://github.com/culturagrowth/code.git` e `git checkout claude/sync-gameplay-clip-app-xpgfwx`.
+- Se a pasta `code` não existir: `git clone https://github.com/nicolaspercio1/code.git` e `git checkout claude/sync-gameplay-clip-app-xpgfwx`.
 - Se já existir: `git fetch origin` e `git checkout claude/sync-gameplay-clip-app-xpgfwx`, depois `git pull --rebase`.
   Se houver mudanças locais, me pergunte antes de mexer nelas.
 
