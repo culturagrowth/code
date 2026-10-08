@@ -5,8 +5,8 @@ compatibility_date = "2026-09-01"
 # Non-secret configuration. Fill these in before deploying (see README.md).
 # R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are secrets: `wrangler secret put <NAME>`.
 [vars]
-ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"  # 32 hex chars, dashboard > R2 overview
-BUCKET_NAME = "duoclip-clips"                      # must equal bucket_name below
+ACCOUNT_ID = "7c708b08d5c75a21cb2d61ad1c25c121"
+BUCKET_NAME = "povclip"
 
 # Optional circuit breakers against abuse (POST /v1/devices is open by design). Both are counted
 # per UTC day for the whole service; a missing or malformed value keeps the default shown here.
@@ -18,12 +18,12 @@ BUCKET_NAME = "duoclip-clips"                      # must equal bucket_name belo
 # Uploads and downloads never go through the Worker: clients use presigned URLs.
 [[r2_buckets]]
 binding = "CLIPS"
-bucket_name = "duoclip-clips"
+bucket_name = "povclip"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "duoclip"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"        # printed by `wrangler d1 create duoclip`
+database_id = "696b75a4-5499-402d-8076-d20c16f52ac7"
 migrations_dir = "migrations"
 
 # Hourly sweep of expired clips, signatures, invites and usage counters.

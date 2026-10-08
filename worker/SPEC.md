@@ -99,6 +99,21 @@ All uuids are lowercase and hyphenated.
 - Routes, using in-memory fakes: membership enforcement (403), the pov ≠ caller upload rejection, invite expiry and uses, and idempotent clip registration.
 - `npm run typecheck` and `npm test` both pass.
 
+### Opt-in real R2 verification (task 13)
+
+- `npm run test:r2 -- [--env-file path/to/.dev.vars]` compiles and runs the existing Worker presigner against real R2.
+  The environment file defaults to the current Worker's `.dev.vars`. This command is separate from offline `npm test`.
+- One fresh random `clips/{crew}/{clip}/{pov}/proxy/000000.bin` key is checked for `404 NoSuchKey`, uploaded with synthetic
+  AES-GCM ciphertext and the exact signed length/type, then downloaded and compared byte-for-byte.
+- Reusing the PUT URL with a different body length must yield `403 SignatureDoesNotMatch`. Cleanup signs a DELETE of
+  this one key only, attempts it even after a lost PUT response, and verifies `404 NoSuchKey` afterwards.
+- Each HTTP request has a 15-second deadline and rejects redirects. No existing clips, bucket settings, D1 data or
+  deployed Workers are modified. Credentials, request headers, signed URLs and raw error bodies are never logged.
+- The JSON result reports steps/statuses, success and cleanup. A failed cleanup includes only the random object key
+  for manual removal. Exit code is nonzero for configuration, network, protocol, data-integrity or cleanup failures.
+- Real R2 remains unverified until this opt-in command succeeds. D1's id in the local file is configuration metadata;
+  it does not supply Cloudflare administration authentication or prove that remote migrations have been applied.
+
 ## Implementation notes (accepted deviations, Phase A review) — the Rust client MUST follow these
 
 - **Upload URLs sign `Content-Length` and `Content-Type: application/octet-stream`.** The client must PUT exactly the returned
@@ -120,3 +135,10 @@ All uuids are lowercase and hyphenated.
   `wrangler dev`, **not against real R2** (no credentials yet).
 - Recommended after the friends register: Cloudflare rate-limiting rules on `POST /v1/devices` and `POST /v1/crews/join`, and possibly closing
   registration. Any crew member can delete any clip (per SPEC), and there is no member removal yet.
+
+## Implementation notes (task 13, awaiting cross-review and real R2 verification)
+
+- The opt-in probe uses existing dependencies and does not change production routes, quotas or presigning rules.
+  Nine offline tests cover the probe's control flow, exact headers, cleanup, redaction and negative length check.
+- Actual network access failed before any HTTP response with `EACCES`; no real object was created. See `R2-VALIDACAO.md`.
+  Non-secret R2/D1 identifiers are configured, but no Worker deployment or remote D1 migrations were performed.

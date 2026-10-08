@@ -175,6 +175,27 @@ npm run typecheck    # tsc --noEmit (strict)
 npm test             # vitest run, em ambiente Node
 ```
 
+Para verificar o **R2 real**, com suas credenciais em `.dev.vars`, há um teste opcional:
+
+```sh
+npm run test:r2
+```
+
+Em um worktree separado, você pode apontar para o arquivo de credenciais da pasta principal, sem copiá-lo:
+
+```powershell
+npm.cmd run test:r2 -- --env-file "C:\Users\bolad\Projetos\duoclip\worker\.dev.vars"
+```
+
+O teste usa o gerador de URLs do Worker: envia alguns bytes sintéticos cifrados, baixa e compara o conteúdo,
+confere se alterar o tamanho assinado resulta em `403 SignatureDoesNotMatch` e remove o único objeto temporário.
+Ele confirma a remoção com um GET. As chaves do objeto são UUIDs novos; nenhum clipe existente é alterado.
+Se a limpeza falhar, o resultado inclui a chave exata para remoção manual. Credenciais e URLs assinadas não aparecem na saída.
+
+Esse comando precisa de acesso à rede. Um erro `EACCES` do sandbox não valida nem invalida as credenciais; nesse caso,
+rode-o no seu terminal habitual. O banco D1 e o Worker publicado precisam de validação separada; os tokens S3 não
+autenticam o Wrangler para administrar a conta Cloudflare. `npm test` continua usando somente dados sintéticos locais.
+
 Os testes não usam rede nem login do wrangler e rodam em poucos segundos:
 
 - o SQL de `src/db.ts` roda de verdade num SQLite em memória (`node:sqlite`) carregado com todas as migrações de
