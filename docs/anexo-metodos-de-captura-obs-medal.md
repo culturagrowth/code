@@ -156,5 +156,6 @@ Faça um teste "caixa-preta" num PC de vocês com Windows 11 e o Medal atual nas
 - Os dois métodos mais eficientes que existem (driver e hook) **não estão disponíveis** de forma legítima e segura para um app novo:
   - o NvFBC é restrito e descontinuado;
   - o hook depende de uma exceção nos anti-cheats que só OBS e similares têm, e o CS2 em modo confiável não aceita injeção de terceiros.
-- **Entre os métodos que podemos usar, o WGC de janela é o mais eficaz.** Discord e SteelSeries já o oferecem. No Medal ele é só um modo opcional; o padrão do Medal é o hook injetado, sem borda amarela.
+- **Entre os métodos que podemos usar com segurança, o melhor é a captura sem injeção:** Desktop Duplication recortado na janela do jogo (sem borda no Windows 10, o mesmo método sem injeção do Medal) e WGC no Windows 11. No Medal o WGC é só um modo opcional; o padrão do Medal é o hook injetado, sem borda amarela.
+- **Decisão (08/10/2026):** sem injeção por padrão; o hook estilo Medal fica previsto na arquitetura como modo opcional futuro, só para jogos sem anti-cheat.
 - A comprovação final vem do **nosso benchmark com PresentMon** na Fase 0.

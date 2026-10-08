@@ -20,7 +20,8 @@
 | **Relógio global** dentro do app, em vez do relógio do computador | Criamos o **Relógio Global DuoClip**. Ele usa o contador de alta precisão do PC (QPC) como base e é sincronizado com servidores de hora atômica com NTS (NTP.br e Cloudflare). Durante a sessão, os PCs se refinam entre si. Todos os clipes de todos os participantes ficam na mesma linha do tempo (UTC). | [Seção 8](#8-relógio-global-do-duoclip) |
 | Verificar a **gravação um pouco depois do momento do aperto** | Pesquisamos como OBS, Medal, Overwolf, Steam, NVIDIA e outros fazem. Desenhamos o mecanismo "fixar e coletar", com margens de segurança, valores padrão e uma tabela de casos de borda. | [Seção 6](#6-buffer-de-replay-e-gravação-além-do-aperto-pós-roll) |
 | **Sistema de bucket** para os clipes temporários | Comparamos R2, S3 São Paulo, GCS, Supabase, B2 e Wasabi (preços oficiais, expiração e segurança). Recomendação: **Cloudflare R2 com criptografia ponta a ponta e expiração automática**, mais "buckets" locais em disco para os clipes em andamento. | [Seção 10](#10-rede-e-armazenamento-temporário-bucket) |
-| Verificar se **a gravação de tela é a mais eficaz** e o que **Medal e OBS usam** | Lemos o código-fonte do OBS e reunimos as evidências sobre o Medal: o suporte do próprio Medal, logs reais e análise do instalador. Resposta: os dois usam **por padrão um hook injetado no jogo**, e o **WGC aparece como opção** ("Modern (WGC)" no OBS, "Advanced Window Capture" no Medal). Para um app novo que precisa ser seguro com anti-cheat, **o WGC é o melhor método disponível**. | [Seção 4](#4-captura-de-vídeo-o-que-obs-e-medal-usam-e-qual-é-o-mais-eficaz) e [anexo](anexo-metodos-de-captura-obs-medal.md) |
+| **Decisão de captura** (08/10): sem injeção por padrão; hook como opcional futuro | Padrão: **captura sem injeção**, com Desktop Duplication recortado na janela do jogo no Windows 10, que é sem borda amarela (o mesmo método sem injeção do Medal). O **hook estilo Medal** fica previsto na arquitetura, como modo opcional para jogos sem anti-cheat, implementado numa fase posterior. | [Seção 4.5–4.8](#45-decisão-sem-injeção-por-padrão-hook-como-modo-opcional-futuro) |
+| Verificar se **a gravação de tela é a mais eficaz** e o que **Medal e OBS usam** | Lemos o código-fonte do OBS e reunimos as evidências sobre o Medal: o suporte do próprio Medal, logs reais e análise do instalador. Resposta: os dois usam **por padrão um hook injetado no jogo**, e o **WGC aparece como opção** ("Modern (WGC)" no OBS, "Advanced Window Capture" no Medal). Para um app novo que precisa ser seguro com anti-cheat, o melhor é a **captura sem injeção** (veja a decisão acima). | [Seção 4](#4-captura-de-vídeo-o-que-obs-e-medal-usam-e-qual-é-o-mais-eficaz) e [anexo](anexo-metodos-de-captura-obs-medal.md) |
 
 ---
 
@@ -51,7 +52,7 @@
 
 | Tema | Decisão | Por quê |
 |---|---|---|
-| Captura de vídeo | **Windows.Graphics.Capture (WGC)** na **janela do jogo**, com fallback para captura do monitor só quando o jogo está em fullscreen exclusivo | É o método mais eficaz entre os que **não injetam código no jogo**. OBS e Medal têm métodos mais leves (hooks), mas eles dependem de exceções nos anti-cheats que um app novo não tem. |
+| Captura de vídeo | **Sem injeção por padrão:** Desktop Duplication recortado na janela do jogo no **Windows 10, sem borda amarela**; WGC sem borda ou o mesmo método no Windows 11. **Hook estilo Medal** como modo opcional **futuro**, só em jogos sem anti-cheat. | Seguro com qualquer anti-cheat e leve, porque a compressão é feita pelo chip de vídeo. O hook é o mais leve de todos, mas só é seguro em jogos sem anti-cheat, por isso fica opcional e para depois. |
 | Codificação | Encoder de hardware (NVENC, AMF ou Quick Sync), com a imagem sempre na GPU | Todo gravador moderno faz assim. O impacto no FPS é mínimo. |
 | Buffer | Fila circular **na RAM** de pacotes já codificados, com keyframe a cada 1 s e sem B-frames | Mesmo modelo do OBS. O corte do clipe sai em milissegundos, sem recodificar. |
 | **Pós-roll** | **"Fixar e coletar"**: ao apertar, o trecho anterior é fixado no buffer, e o app continua gravando até T + depois + margem antes de fechar o clipe | Esperar e só então salvar não funciona, porque o começo do clipe já teria saído do buffer. O Medal (Game API) e o Overwolf fazem pós-roll desse jeito. |
@@ -108,9 +109,9 @@ Nenhuma ferramenta **dispara o clipe em vários PCs ao mesmo tempo com sincronia
 | Método | Como funciona | Custo para o jogo | Disponível para um app novo e seguro? |
 |---|---|---|---|
 | **Captura no driver** (NVIDIA NvFBC, AMD) | O driver copia o framebuffer direto para o encoder | O mais baixo | ❌ O NvFBC foi descontinuado e é restrito na GeForce (exige a chave da NVIDIA e admin). A API da AMD só captura o monitor inteiro. |
-| **Hook injetado** (OBS "Game Capture", padrão do Medal) | Uma DLL dentro do jogo copia cada frame para uma textura compartilhada | Muito baixo | ❌ É **injeção de código**. Só funciona com anti-cheat porque OBS e similares têm o **certificado** liberado. O próprio OBS avisa que o CS2 pode exigir `-allow_third_party_software` para o Game Capture funcionar. |
-| **WGC de janela** (Windows.Graphics.Capture) | API oficial do Windows que entrega os frames da janela | Baixo | ✅ **Sim.** Não toca no processo do jogo e pega só a janela. |
-| **DXGI Desktop Duplication / WGC de monitor** | Copia o monitor inteiro já composto | Médio | ⚠️ Sim, mas captura **tudo** que está na tela (notificações, DMs). Fica só como fallback. |
+| **Hook injetado** (OBS "Game Capture", padrão do Medal) | Uma DLL dentro do jogo copia cada frame para uma textura compartilhada | Muito baixo | ⚠️ Só como **modo opcional futuro**, em jogos **sem anti-cheat**. É **injeção de código**: com anti-cheat só funciona para OBS e similares, que têm o **certificado** liberado. O próprio OBS avisa que o CS2 pode exigir `-allow_third_party_software` para o Game Capture funcionar. |
+| **WGC de janela** (Windows.Graphics.Capture) | API oficial do Windows que entrega os frames da janela | Baixo | ✅ Sim. Não toca no jogo e pega só a janela, mas **no Windows 10 mostra borda amarela**. |
+| **DXGI Desktop Duplication** (recortado na janela do jogo) | Copia o monitor já composto e recorta a área do jogo na GPU | Baixo–médio (a medir) | ✅ **Sim, e é o padrão no Windows 10:** sem borda e sem injeção. Cuidado: grava o que aparecer por cima do jogo (seção 4.6). |
 | **BitBlt** | Cópia pela CPU (GDI) | Alto | ⚠️ Antigo e pesado para jogos |
 
 ### 4.2 O que o OBS usa (conferido no código-fonte)
@@ -146,41 +147,113 @@ Nenhuma ferramenta **dispara o clipe em vários PCs ao mesmo tempo com sincronia
 | SteelSeries Moments | "Game Capture (WGC)" no Windows 11 |
 | Allstar / Eklipse | Não gravam localmente (demo e VOD na nuvem) |
 
-### 4.5 Veredito: a captura de janela (WGC) é a mais eficaz?
+### 4.5 Decisão: sem injeção por padrão, hook como modo opcional futuro
 
-**Entre os métodos que um app novo pode usar com segurança, sim.**
+> **Decidido em 08/10/2026:** o padrão é a captura **sem injeção**. O hook no estilo Medal fica **previsto na arquitetura**, mas é **implementado numa fase posterior**, como modo opcional.
 
-- Os métodos mais leves que existem (driver e hook) **não estão disponíveis** para nós. O NvFBC é restrito e descontinuado. O hook exige uma exceção nos anti-cheats que só OBS e similares têm, e atrairia ban e bloqueio. Até o OBS teve problemas de compatibilidade quando trocou o certificado na versão 31.
-- O WGC custa pouco. A medição do OBS deu ~200–800 µs de CPU por frame e um pouco menos de GPU que o BitBlt.
-- O WGC **não injeta nada** e grava **só a janela do jogo**. Discord e SteelSeries já o oferecem. No Medal ele é só um modo **opcional** ("Advanced Window Capture"): o padrão do Medal é o hook injetado, e é por isso que o Medal não mostra borda amarela.
-- **Não existe benchmark independente** comparando todos os métodos em FPS. Vamos medir nós mesmos com **PresentMon** na Fase 0 (CS2, Valorant, Fortnite, LoL, Minecraft e Roblox, em hardware médio do Brasil).
+| Modo | Quando | Por quê |
+|---|---|---|
+| **Padrão: sem injeção** | Sempre, em qualquer jogo, desde o MVP | O app não encosta no jogo, então não há risco com anti-cheat e o jogo não trava por causa do app. A parte pesada (comprimir o vídeo) é feita pelo chip de vídeo da placa, igual ao Medal. |
+| **Opcional: hook injetado** (como o padrão do Medal) | Fase futura, só em jogos **sem anti-cheat**, ligado pelo usuário jogo a jogo | É o mais leve possível e funciona em tela cheia exclusiva, mas é código dentro do jogo. Um app novo não tem a "liberação" que OBS e Medal têm nos anti-cheats. |
 
-### 4.6 Cadeia de fallback
+Os métodos mais leves que existem (driver e hook) não servem como padrão para nós:
 
-1. **WGC da janela do jogo** (padrão).
-2. **Jogo em fullscreen exclusivo "de verdade":** o WGC mostra a área de trabalho em vez do jogo. Nesse caso:
-   - detectar sem admin: `SHQueryUserNotificationState == QUNS_RUNNING_D3D_FULL_SCREEN`, retângulo da janela igual ao do monitor, ou ausência de frames com o jogo em primeiro plano;
-   - **primeiro, pedir ao usuário** para mudar para "tela cheia sem bordas";
-   - se ele preferir manter, usar **DDA do monitor recortado na janela** (AMF Display Capture em placas AMD), **com aviso de privacidade** e **sem upload automático**.
-3. **Notebook híbrido:** WGC de monitor quando o DDA não enxerga a saída, a mesma regra do OBS.
-4. **Banco de dados de jogos** atualizável remotamente (o Medal faz isso), com o método que funciona em cada título.
+- o NvFBC da NVIDIA é restrito e foi descontinuado;
+- o hook exige uma exceção nos anti-cheats que só OBS e similares têm. Até o OBS teve problemas quando trocou o certificado na versão 31.
 
-### 4.7 Configuração do WGC (melhorando o que o OBS faz)
+Não existe benchmark independente comparando os métodos em FPS. Por isso vamos medir com **PresentMon** na Fase 0 (CS2, Valorant, Fortnite, LoL, Minecraft e Roblox, em hardware médio do Brasil).
+
+### 4.6 Modo padrão: qual captura sem injeção em cada Windows
+
+| Windows | Método padrão | Borda amarela | Observação |
+|---|---|---|---|
+| **Windows 10** | **Desktop Duplication recortado na janela do jogo** | **Não** | É o mesmo método sem injeção que o Medal usa na captura de janela "padrão" (os logs mostram `Capture mode: DXGI` e um retângulo de captura). |
+| **Windows 11** | WGC sem borda, se o teste de empacotamento confirmar (4.10); senão, o mesmo Desktop Duplication recortado | Não | O WGC grava só a janela, mesmo com algo por cima. |
+
+> 🔎 **Em avaliação:** a pesquisa em andamento compara o Desktop Duplication recortado com o *DWM shared surface* (API não documentada usada pelo app Magpie, também sem borda) e mede os efeitos de cada um no FPS e na latência. O método final de cada versão do Windows será confirmado com essa pesquisa e com o benchmark da Fase 0.
+
+**Cuidados com o Desktop Duplication recortado:**
+
+- **Ele grava o que aparecer por cima do jogo** (uma notificação, um popup do Discord). Quando o jogo perde o foco, o app grava uma tela "jogo fora de foco" no lugar, como o Medal faz. A detecção usa `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)`, que funciona de fora do processo, sem injeção.
+- O app acompanha a posição e o tamanho da janela do jogo para ajustar o recorte. O recorte é feito na GPU (`CopySubresourceRegion` direto na textura de entrada do encoder).
+- Quando o modo de tela muda, a duplicação precisa ser recriada (`DXGI_ERROR_ACCESS_LOST`).
+- A duplicação roda na GPU dona do monitor. Em notebook híbrido, isso exige uma cópia GPU→GPU ou codificar na GPU integrada.
+- O cursor não entra na imagem, o que é bom para jogos.
+
+**Ordem de fallback:**
+
+1. o método padrão da tabela acima;
+2. WGC de janela (no Windows 10, com borda), se o Desktop Duplication falhar, por exemplo com o jogo num monitor de outra GPU;
+3. pedir "tela cheia sem bordas" quando a tela cheia exclusiva der problema;
+4. **banco de dados de jogos** atualizável remotamente (o Medal faz isso), com o método que funciona em cada título.
+
+### 4.7 Modo hook (opcional, implementação futura)
+
+- **O que é:** uma DLL no estilo do Medal e do OBS, carregada dentro do jogo, que copia cada frame direto para uma textura compartilhada. É o método mais leve, não tem borda e funciona em tela cheia exclusiva.
+- **Regras de uso:**
+  - **desligado por padrão**, e o usuário liga **jogo a jogo**;
+  - só pode ser ligado em jogos marcados como **"sem anti-cheat"** no banco de jogos (por exemplo Minecraft e jogos single-player);
+  - **bloqueado** em jogos com Vanguard, Easy Anti-Cheat, BattlEye, VAC/CS2, FACEIT, Gamers Club, Ricochet, Hyperion (Roblox) etc.;
+  - se o hook falhar ou o jogo atualizar, o app volta sozinho para o modo sem injeção.
+- **Entrega:**
+  - componente **separado** (`duoclip-hook`), assinado digitalmente. Assim o app principal não carrega nenhum código de injeção enquanto o modo estiver desligado;
+  - se for derivado do *graphics-hook* do OBS, ele é GPL-2. Nesse caso, distribuir como componente separado com o código-fonte disponível, como o Medal faz. A outra opção é escrever do zero.
+- **O que já fica pronto agora para ele encaixar depois:**
+  - a interface comum de captura (4.8);
+  - os campos de anti-cheat e de métodos permitidos no banco de jogos;
+  - os timestamps em QPC iguais aos dos outros métodos.
+
+### 4.8 Arquitetura: métodos de captura plugáveis
+
+Todo método de captura entrega a mesma coisa ao resto do app: uma **textura na GPU** e o **horário QPC** do frame. Encoder, buffer, pós-roll e relógio global não sabem qual método está em uso.
+
+```rust
+/// Implementado por cada método: "dda_crop", "wgc" e, no futuro, "hook".
+pub trait CaptureBackend {
+    fn id(&self) -> BackendId;
+    fn injects_into_game(&self) -> bool;          // true só no hook
+    fn supports(&self, target: &GameTarget) -> Support;
+    fn start(&mut self, target: &GameTarget, sink: FrameSink) -> Result<()>;
+    fn stop(&mut self);
+}
+
+pub struct CapturedFrame {
+    pub texture: ID3D11Texture2D, // já na GPU, vai direto para conversão de cor + encoder
+    pub qpc_100ns: i64,           // horário no relógio local (QPC)
+    pub content_rect: Rect,       // área do jogo dentro da textura
+    pub game_focused: bool,       // false => grava a tela "jogo fora de foco"
+}
+```
+
+Escolha do método para cada jogo:
+
+```text
+jogo  = banco_de_jogos[exe]
+pedido = configuração do usuário para esse jogo (ou o padrão do banco)
+se pedido == hook e (jogo.anticheat != "nenhum" ou hook não instalado):
+    pedido = padrão_sem_injeção(versão do Windows)
+se pedido falhar ao iniciar:
+    tentar o próximo da ordem de fallback (4.6)
+```
+
+Campos do banco de jogos: `exe`, `nome`, `anticheat` (ex.: `vanguard`, `eac`, `battleye`, `vac`, `nenhum`), `metodos_permitidos`, `metodo_padrao`, `observacoes` (ex.: "pedir tela cheia sem bordas").
+
+### 4.9 Configuração do WGC (quando usado)
 
 - Usar `Direct3D11CaptureFramePool.CreateFreeThreaded`, com 2–3 buffers numa thread dedicada. Passar o frame **direto** para a conversão de cor e o encoder, evitando a cópia extra que o OBS admite fazer.
 - Configurar e medir `MinUpdateInterval` (Win11 24H2+). Sem ele, há relatos de captura limitada a ~50–60 fps.
 - No Windows 11 24H2, o WGC pode parar de entregar frames quando a imagem não muda. Nesse caso, repetir o último frame para manter a taxa constante.
 - `IsCursorCaptureEnabled(false)` em jogos (a mira é desenhada pelo próprio jogo).
-- Timestamp de cada frame: `SystemRelativeTime` (QPC). Atenção: é o momento da **composição pelo DWM**, então é preciso **calibrar o atraso áudio/vídeo** por fonte (um teste mediu de 18 a 44 ms).
-- Respeitar janelas protegidas (`WDA_EXCLUDEFROMCAPTURE`). Também não dá para capturar janelas de jogos rodando como admin sem o app também ser admin, e isso deve ser avisado na interface.
+- Timestamp de cada frame: `SystemRelativeTime` (QPC). É o momento da **composição pelo DWM**, então é preciso **calibrar o atraso áudio/vídeo** por fonte (um teste mediu de 18 a 44 ms). O mesmo vale para o Desktop Duplication.
+- Respeitar janelas protegidas (`WDA_EXCLUDEFROMCAPTURE`). Jogos rodando como admin só podem ser capturados se o app também rodar como admin, e a interface deve avisar.
 - **HDR:** detectar o espaço de cor com `IDXGIOutput6::GetDesc1`, capturar em FP16 e aplicar *tone-mapping* para SDR na GPU. O Medal tem um "HDR Compatibility" justamente por causa de clipes estourados.
-- **Mudança de resolução** (alt-enter): codificar numa **resolução de saída fixa** escolhida no início da sessão, escalando na GPU, para o encoder não reiniciar no meio de um clipe.
+- **Mudança de resolução** (alt-enter): codificar numa **resolução de saída fixa**, escolhida no início da sessão e escalada na GPU, para o encoder não reiniciar no meio de um clipe.
 
-### 4.8 Borda amarela, Windows 10 e empacotamento
+### 4.10 Borda amarela e empacotamento
 
-- Remover a borda exige o **build 20348+**, ou seja, o **Windows 11**. O Windows 10 22H2 é o build 19045, então **no Windows 10 a borda amarela fica sempre visível** enquanto o app grava. Ela **não aparece no vídeo**, só na tela.
-- No Windows 11 o fluxo é: `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` (pede consentimento ao usuário) e depois `IsBorderRequired(false)`. A Microsoft documenta que é preciso a capability `graphicsCaptureWithoutBorder` no **manifesto de pacote**. O OBS, que não é empacotado, chama a mesma API, mas **não está documentado** se a remoção funciona sem pacote. **Protótipo de 1 dia:** testar (a) app sem pacote, (b) sem pacote com a opção do Windows 11 ligada e (c) pacote esparso/MSIX com a capability.
-- **No Windows 10:** oferecer "WGC com borda" (padrão) ou "DDA recortado" (sem borda, mas pega o que estiver por cima do jogo).
+- No WGC, remover a borda exige o **build 20348+**, ou seja, Windows 11. **No Windows 10 não há como tirar a borda do WGC**, e é por isso que lá o padrão é o Desktop Duplication recortado.
+- No Windows 11 o fluxo é `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` (pede consentimento ao usuário) seguido de `IsBorderRequired(false)`. A Microsoft documenta que é preciso a capability `graphicsCaptureWithoutBorder` no **manifesto de pacote**. O OBS, que não é empacotado, chama a mesma API, mas **não está documentado** se a remoção funciona sem pacote.
+- **Protótipo de 1 dia:** testar (a) app sem pacote, (b) sem pacote com a opção do Windows 11 ligada e (c) pacote esparso/MSIX com a capability. Se nenhuma funcionar sem complicação, o Windows 11 também usa o Desktop Duplication recortado.
 
 ---
 
@@ -188,7 +261,7 @@ Nenhuma ferramenta **dispara o clipe em vários PCs ao mesmo tempo com sincronia
 
 ```mermaid
 flowchart LR
-    A["WGC: textura D3D11 + QPC"] --> B["GPU: conversão BGRA para NV12<br/>(+ tone-map HDR, escala fixa)"]
+    A["Captura (DDA recortado / WGC / hook futuro):<br/>textura D3D11 + QPC"] --> B["GPU: conversão BGRA para NV12<br/>(+ tone-map HDR, escala fixa)"]
     B --> C["Encoder de hardware<br/>NVENC / AMF / QSV"]
     C --> D["Pacotes H.264<br/>PTS em QPC"]
     D --> E["Ring buffer na RAM"]
@@ -206,7 +279,7 @@ flowchart LR
 | B-frames | **0** | Menor latência do encoder e corte final trivial |
 | Prévia (proxy) | **Transcodificada sob demanda** a partir do trecho salvo (decode e encode em hardware) | Não manter uma segunda codificação contínua, porque o limite de sessões simultâneas de NVENC na GeForce é compartilhado com Discord e ShadowPlay |
 | GPU sem encoder (RX 6500 XT/6400, GT 1030) | Usar o encoder da GPU integrada, se houver. Senão, x264 720p30 "superfast" com aviso. | Essas placas não têm encoder de hardware |
-| Notebook híbrido | Codificar na GPU dona da superfície do WGC, ou fazer uma cópia GPU→GPU explícita, conforme a medição | Evitar uma leitura escondida pela CPU |
+| Notebook híbrido | Codificar na GPU dona da imagem capturada, ou fazer uma cópia GPU→GPU explícita, conforme a medição | Evitar uma leitura escondida pela CPU |
 
 O caminho mais prático é o **FFmpeg (libavcodec, build LGPL)** com `h264_nvenc`, `h264_amf` ou `h264_qsv` e frames D3D11. O FFmpeg 8.1 também tem o filtro `gfxcapture` (WGC), útil num protótipo rápido.
 
@@ -282,7 +355,7 @@ stateDiagram-v2
 | A conexão cai antes da confirmação | Quem pediu guarda o pedido e reenvia ao reconectar. O amigo ignora duplicatas pelo `clip_id`. |
 | O jogo fecha durante o pós-roll | Finaliza antes da hora e marca `truncated_by_source_end` |
 | O app trava no pós-roll | O bucket local e o journal sobrevivem. Ao reiniciar, o app finaliza como parcial e avisa o amigo. |
-| Janela minimizada (WGC sem frames novos) | Repete o último frame ou usa o timeout. O áudio continua. |
+| Jogo minimizado ou fora de foco | Desktop Duplication: grava a tela "jogo fora de foco". WGC: repete o último frame ou usa o timeout. O áudio continua. |
 | Driver da GPU reinicia | Fecha o fragmento, registra a lacuna e reinicia o encoder com IDR |
 | Sincronia ainda não convergiu | Margens alargadas automaticamente e aviso de "sincronia de baixa confiança" |
 | Disco cheio | Mantém o clipe só na RAM e avisa. Nunca trava a captura. |
@@ -605,13 +678,13 @@ clips/{pair_id}/{clip_id}/{pov}/manifest.bin   ← cifrado: bloco → faixa de t
 
 | Área | Medida |
 |---|---|
-| **Anti-cheat** | Nenhuma injeção de DLL, driver ou leitura de memória do jogo. Mapear **todas** as chamadas que tocam o processo ou a janela do jogo (meta: nenhum handle além de `PROCESS_QUERY_LIMITED_INFORMATION`). Testar com uma build assinada em Vanguard, EAC, BattlEye, FACEIT e **Gamers Club AC**, e abrir contato com FACEIT e Gamers Club. |
+| **Anti-cheat** | No modo padrão, nenhuma injeção de DLL, driver ou leitura de memória do jogo. O modo hook futuro fica desligado por padrão e é bloqueado em jogos com anti-cheat (seção 4.7). Mapear **todas** as chamadas que tocam o processo ou a janela do jogo (meta: nenhum handle além de `PROCESS_QUERY_LIMITED_INFORMATION`). Testar com uma build assinada em Vanguard, EAC, BattlEye, FACEIT e **Gamers Club AC**, e abrir contato com FACEIT e Gamers Club. |
 | **Atalho** | `RegisterHotKey`, com o QPC registrado no `WM_HOTKEY`, mais Raw Input e XInput para controle. **Evitar hooks globais de teclado** (`WH_KEYBOARD_LL`), que parecem keylogger. Segundo análise de terceiros, o Medal usa `SetWindowsHookEx` para atalhos. |
 | **Quem pode disparar clipes** | Só amigos **pareados entre si** e numa sessão "jogar juntos" ativa. O pareamento já vale como autorização, então não há tela de aprovação. Cada PC mostra um aviso informativo ("Fulano clipou") e registra o histórico. |
 | **Escopo** | Só a janela do jogo e só o áudio do jogo e do Discord. Respeitar janelas protegidas. |
 | **Dados** | Buffer só na RAM. Buckets locais criptografados e apagados. Bucket na nuvem cifrado de ponta a ponta, com expiração ≤ 72 h e botão "apagar meus clipes agora". |
 | **Rede** | DTLS no WebRTC, chaves fixadas, URLs assinadas curtas, cotas, schema rígido de mensagens e *fuzzing*. |
-| **Código** | Rust no núcleo. FFmpeg LGPL atualizado. **Não copiar código do OBS** (GPL): reimplementar os padrões. |
+| **Código** | Rust no núcleo. FFmpeg LGPL atualizado. **Não copiar código do OBS** (GPL) para dentro do app: reimplementar os padrões. Um hook derivado do OBS só pode vir como componente separado com código-fonte disponível. |
 | **Jurídico** | Uso privado entre amigos, então não há exigências adicionais neste plano. Se um dia o app for aberto ao público, revisar LGPD e ECA Digital (Lei 15.211/2025) antes. |
 
 ---
@@ -620,7 +693,7 @@ clips/{pair_id}/{clip_id}/{pov}/manifest.bin   ← cifrado: bloco → faixa de t
 
 | Camada | Escolha | Observação |
 |---|---|---|
-| Núcleo (captura, encoder, buffer, relógio) | **Rust** + `windows-rs` + FFmpeg (`ffmpeg-next`/`rsmpeg`, build LGPL) | `windows-capture` como ponto de partida para o WGC |
+| Núcleo (captura, encoder, buffer, relógio) | **Rust** + `windows-rs` + FFmpeg (`ffmpeg-next`/`rsmpeg`, build LGPL) | Desktop Duplication e WGC via `windows-rs` (`windows-capture` como referência para o WGC) |
 | Relógio global | `ntp-proto` / fork do `rkik-nts` + estimador próprio | Seção 8.9 |
 | Interface e editor | **Tauri 2** (WebView2) + TypeScript (React ou Svelte) | WebCodecs para o editor |
 | Rede P2P | `webrtc-rs` ou `libdatachannel` (MPL 2.0) | — |
@@ -629,7 +702,10 @@ clips/{pair_id}/{clip_id}/{pov}/manifest.bin   ← cifrado: bloco → faixa de t
 
 ```
 duoclip/
-├─ core/            # Rust: WGC, WASAPI, encoder, ring buffer, pós-roll, buckets locais
+├─ core/            # Rust: WASAPI, encoder, ring buffer, pós-roll, buckets locais
+│  └─ capture/      #   métodos plugáveis: dda_crop, wgc (e hook, no futuro)
+├─ hook/            # (fase futura) componente separado e assinado do modo hook
+├─ gamesdb/         # banco de jogos: anti-cheat, métodos permitidos, padrão
 ├─ clock/           # Rust: AppClock (QPC + NTS + P2P), estimador, metadados
 ├─ net/             # Rust: pareamento, WebRTC, protocolo de clipes, upload/download cifrado
 ├─ app/             # Tauri 2: bandeja, configurações, amigos, editor
@@ -641,12 +717,12 @@ duoclip/
 
 ## 14. Distribuição e requisitos mínimos
 
-- **Microsoft Store:** cadastro gratuito para pessoa física desde set/2025, com a Microsoft assinando o MSIX. O pacote pode ser necessário para remover a borda amarela (seção 4.8).
+- **Microsoft Store:** cadastro gratuito para pessoa física desde set/2025, com a Microsoft assinando o MSIX. O pacote pode ser necessário para remover a borda do WGC no Windows 11 (seção 4.10).
 - **Fora da Store:** certificado OV/EV. O Azure Artifact Signing aceita pessoas físicas só dos EUA e do Canadá.
 
 | Item | Mínimo | Recomendado |
 |---|---|---|
-| Windows | **Windows 10 22H2** (borda amarela sempre visível com WGC; áudio por processo com retentativa). Ainda é ~25–27% do Brasil (StatCounter, 2026), e as atualizações ESU para consumidores foram **estendidas até 12/10/2027**. | **Windows 11** (sem borda; `MinUpdateInterval` no 24H2+) |
+| Windows | **Windows 10 22H2**, com suporte completo e **sem borda amarela** (Desktop Duplication recortado). Áudio por processo com retentativa. Ainda é ~25–27% do Brasil (StatCounter, 2026), e as atualizações ESU para consumidores foram **estendidas até 12/10/2027**. | **Windows 11** (`MinUpdateInterval` no 24H2+) |
 | GPU | Qualquer uma com encoder H.264 de hardware | GPU dos últimos anos. RX 6500 XT/6400 e GT 1030 **não têm encoder** e caem no modo degradado. |
 | RAM livre | ~0,6 GB (buffer + clipes ativos) | 1 GB+ |
 | Internet | 5 Mbps de upload | 20 Mbps+ de upload |
@@ -658,12 +734,13 @@ duoclip/
 
 | Fase | Entrega | Critério de pronto |
 |---|---|---|
-| **0 — Provas de conceito** | (a) WGC → NVENC/AMF/QSV, com **benchmark PresentMon** contra a captura do monitor; (b) process loopback do jogo e do Discord; (c) **teste da borda** (sem pacote, configuração do Win11, MSIX); (d) protótipo do AppClock com NTS | FPS < 5% de perda. Borda resolvida no Win11. AppClock ≤ 8 ms contra o NTP.br. |
+| **0 — Provas de conceito** | (a) **Desktop Duplication recortado** e WGC → NVENC/AMF/QSV, com **benchmark PresentMon** (comparar com o Medal ligado no mesmo jogo); (b) process loopback do jogo e do Discord; (c) **teste da borda** (sem pacote, configuração do Win11, MSIX); (d) protótipo do AppClock com NTS | FPS < 5% de perda e no nível do Medal. Sem borda no Win10 e no Win11. AppClock ≤ 8 ms contra o NTP.br. |
 | **1 — Clipador local** | Bandeja, ring buffer, **pós-roll "fixar e coletar"**, buckets locais fMP4, faixas separadas | Clipe pronto ≤ 1 s após o fim do pós-roll. Sobrevive a um crash. |
 | **2 — Relógio global + dupla** | NTS + P2P híbrido, estados, indicador "±X ms", pareamento de amigos | Teste do flash ≤ 1 frame (P95) em fibra |
 | **3 — Clipe remoto + bucket** | `ClipRequest`, Worker, R2, criptografia de ponta a ponta, prévia, expiração | Do aperto até a prévia aberta < 20 s com 20 Mbps de upload |
 | **4 — Editor e exportação** | Layouts, mixer, ajuste fino, exportação por hardware | Exportação de 15 s < 10 s numa GPU média |
-| **5 — Produto** | MSIX/Store, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), grupos de 3–5 | Publicado |
+| **5 — Produto** | Instalador/atualização, banco de jogos, testes de anti-cheat (incl. Gamers Club/FACEIT), grupos de 3–5 | Em uso pelo grupo |
+| **6 — Modo hook opcional** | Componente `duoclip-hook` separado e assinado, só para jogos sem anti-cheat do banco, ativado jogo a jogo, com volta automática ao modo sem injeção | Mais leve que o modo padrão no benchmark, sem crashes nos jogos liberados |
 
 ---
 
@@ -672,9 +749,10 @@ duoclip/
 | Risco | Prob. | Impacto | Mitigação |
 |---|---|---|---|
 | Algum anti-cheat sinalizar o app (Gamers Club, FACEIT, Vanguard) | Baixa–média | Alto | Sem injeção, handles mínimos, build assinada, testes por anti-cheat, contato com os fornecedores |
-| Borda amarela no Windows 10 incomodar | Alta | Médio | Explicar que não sai no vídeo e oferecer o modo DDA recortado |
-| Borda não removível sem pacote MSIX | Média | Médio | Protótipo da Fase 0 decide o empacotamento |
-| Jogo em fullscreen exclusivo | Média | Médio | Detecção + pedir "sem bordas" + fallback DDA com aviso |
+| Desktop Duplication gravar algo por cima do jogo (notificação, popup) | Média | Baixo | Tela "jogo fora de foco" quando o jogo perde o foco; o editor permite cortar |
+| Borda do WGC não removível sem pacote no Win11 | Média | Baixo | Usar o Desktop Duplication recortado também no Win11 |
+| Modo hook (futuro) travar um jogo ou ser bloqueado | Média | Médio | Só em jogos sem anti-cheat, desligado por padrão, componente separado, volta automática ao modo sem injeção |
+| Jogo em fullscreen exclusivo | Média | Médio | Detecção + pedir "sem bordas" (o modo hook futuro também resolve, em jogos sem anti-cheat) |
 | Bloqueio de NTS ou UDP 123 na rede do usuário | Baixa | Médio | Fallback: NTP sem autenticação (marcado nos metadados) e P2P puro |
 | Assimetria de rota piorar a sincronia | Média | Médio | Pacotes de menor RTT, regressão de dois lados, ajuste fino no editor |
 | Pós-roll perder o começo do clipe | — | Alto | Mecanismo "fixar e coletar" desde o pedido |
