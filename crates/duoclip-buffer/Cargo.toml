@@ -1,0 +1,13 @@
+[package]
+name = "duoclip-buffer"
+description = "DuoClip replay ring buffer of encoded packets + pin-and-collect clip state machine (post-roll)"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

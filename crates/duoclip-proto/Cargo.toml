@@ -1,0 +1,14 @@
+[package]
+name = "duoclip-proto"
+description = "DuoClip peer-to-peer control protocol (messages, validation, encoding)"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+base64.workspace = true

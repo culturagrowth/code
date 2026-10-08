@@ -1,0 +1,16 @@
+[package]
+name = "duoclip-clock"
+description = "DuoClip global clock: monotonic local time disciplined to UTC (SNTP/NTS sources + P2P refinement)"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+rand = { workspace = true, features = ["small_rng"] }
