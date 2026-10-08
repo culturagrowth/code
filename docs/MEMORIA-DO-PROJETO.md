@@ -222,7 +222,7 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 
 - **Workflow "Fase A"** (agentes): implementar `duoclip-proto` + `duoclip-crypto` (sonnet), `worker/` (sonnet), `duoclip-clock` (opus)
   e `duoclip-buffer` (opus), cada um com revisão adversarial e correção.
-  **Se o código desses crates ainda estiver só com stubs no GitHub, a Fase A não terminou:** rode de novo seguindo os `SPEC.md`.
+  Pode haver commits **"WIP (Fase A em andamento)"** com código parcial desses crates. **Se o último commit da Fase A não for o de conclusão, ou se `cargo test --workspace` falhar, a Fase A não terminou:** termine ou refaça seguindo os `SPEC.md`.
 - **Workflow de pesquisa de captura sem borda no Windows 10:** compara Desktop Duplication recortado × DWM shared surface × hook,
   com uma tabela de anti-cheat por jogo popular no Brasil. Quando terminar, atualizar a seção 4 do documento de pesquisa.
 

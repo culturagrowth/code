@@ -1,0 +1,29 @@
+name = "duoclip-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Non-secret configuration. Fill these in before deploying (see README.md).
+# R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are secrets: `wrangler secret put <NAME>`.
+[vars]
+ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"  # 32 hex chars, dashboard > R2 overview
+BUCKET_NAME = "duoclip-clips"                      # must equal bucket_name below
+
+# Binding used for list/delete (DELETE /v1/clips/:clip and the hourly sweep).
+# Uploads and downloads never go through the Worker: clients use presigned URLs.
+[[r2_buckets]]
+binding = "CLIPS"
+bucket_name = "duoclip-clips"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "duoclip"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"        # printed by `wrangler d1 create duoclip`
+migrations_dir = "migrations"
+
+# Hourly sweep of expired clips, signatures, invites and usage counters.
+[triggers]
+crons = ["0 * * * *"]
+
+# Keeps the sweep summary (one JSON line per run) and error logs in the dashboard.
+[observability]
+enabled = true

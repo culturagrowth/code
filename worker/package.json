@@ -1,0 +1,27 @@
+{
+  "name": "duoclip-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DuoClip backend: device auth, crews, presigned R2 URLs and expiry sweep (Cloudflare Worker).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "aws4fetch": "1.0.20"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261008.1",
+    "@types/node": "26.6.4",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3",
+    "wrangler": "4.148.0"
+  }
+}
