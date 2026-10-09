@@ -108,7 +108,9 @@ Não altere `safe.directory` ou permissões para contornar isso; use seu própri
 - **Windows 10 22H2 e Windows 11** suportados por completo. **Nada de borda amarela.** A eficiência tem que ficar no nível do Medal.
 - **Relógio Global DuoClip:** QPC disciplinado para UTC (NTP.br + Cloudflare, NTS depois) com refino P2P. Nunca usar o relógio do Windows.
 - **Pós-roll "fixar e coletar":** 30 s antes, 10 s depois e ±2 s de margem.
-- **Bucket na nuvem = Cloudflare R2**, com criptografia ponta a ponta, expiração ≤ 72 h e URLs assinadas pelo Worker.
+- **Bucket na nuvem = Cloudflare R2**, com criptografia ponta a ponta e URLs assinadas pelo Worker. **Clipes crus** (POVs para editar) expiram em
+  ≤ 72 h; **clipes editados** ficam sem prazo até encher o plano grátis de 10 GB (aí o app avisa o grupo e apaga os mais antigos). Decisão 20.
+- **Tudo pelo aplicativo:** o usuário e os amigos não usam terminal (cadastro, grupos, convites, edição, download). Decisão 20.
 - Uso **privado entre amigos:** sem tela de consentimento e sem exigências jurídicas extras.
 - **Grupos, não dupla:** cada pessoa pode estar em vários grupos isolados. A **sessão é automática** (membros do mesmo grupo, com o app aberto
   e no mesmo jogo; pergunta quando houver dois grupos online) e suporta **até 8 pessoas**. O clipe vai só para quem está na sessão.
