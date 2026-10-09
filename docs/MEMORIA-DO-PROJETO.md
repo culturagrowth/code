@@ -185,6 +185,9 @@ Uso **privado entre amigos**, sem plano de lançar ao público por enquanto.
 - **Stack:**
   - Rust no núcleo (`windows-rs`, FFmpeg LGPL);
   - **Tauri 2** (WebView2) na interface, com WebCodecs no editor;
+  - A interface começa com HTML/CSS/JS sem dependências externas: início, biblioteca local, configurações e amigos/grupos.
+    Esses mesmos arquivos servirão ao shell Tauri 2. Na prévia do navegador, clipes são escolhidos manualmente e as preferências são
+    exportadas em TOML; a ligação nativa deve fornecer estados reais do gravador e da rede, sem simular amigos conectados ou gravação ativa.
   - `webrtc-rs` ou `libdatachannel` para o P2P;
   - **Cloudflare Worker + R2 + D1** no backend.
 - **Atalho:** `RegisterHotKey`, sem hook global de teclado.
