@@ -164,3 +164,14 @@ Known limits (for later):
 - Discord started after the game is not picked up until the next session; the game's audio follows its process tree only.
 - HDR: FP16 frames are converted with the SDR white level (values above it are clipped; no tone mapping), per duoclip-encode.
 - Out of scope (as in the SPEC): tray/UI, editor, separate audio tracks, network/friends, WGC/hook backends.
+
+### Hotkey by key-state polling (2026-10-08, first real game test)
+
+- In League of Legends the `RegisterHotKey` hotkey never arrived while the game was in the foreground — not even with DuoClip elevated —
+  but it worked on the desktop (verified with the user: F10 on the desktop marked and saved a 43.5 s clip). Our working hypothesis (not
+  verified in the game's code) is that the game reads the keyboard through raw input with `RIDEV_NOHOTKEYS`, which disables application hotkeys.
+- The recorder now polls `GetAsyncKeyState` every loop turn (~10 ms) and fires on the transition to "the exact combination is held"
+  (`HotkeyPoller` in `win/app.rs`). No keyboard hook, no admin rights, and the key is not taken away from the game. With the user's
+  config `atalho = "F10"`, F10 inside League of Legends, non-elevated, saved a 40.0 s clip (1080p60, 2400 frames, AAC with sound).
+- Consequences: the "hotkey already in use" error no longer exists (another program on the same keys also fires, e.g. NVIDIA on Alt+F10);
+  the default `Alt+F10` collides with NVIDIA's instant replay on NVIDIA PCs — consider another default later.
