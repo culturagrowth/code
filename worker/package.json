@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:crew": "tsc --noEmit false --outDir dist/crew-smoke && node dist/crew-smoke/tools/crew-smoke.js",
     "test:r2": "tsc --noEmit false --outDir dist/r2-smoke && node dist/r2-smoke/tools/r2-smoke.js",
+    "prepare:deploy": "npm run typecheck && npm test && wrangler deploy --dry-run --outdir dist/deploy",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
