@@ -38,6 +38,8 @@ só pegue tarefas **livres** ou com o seu nome; uma branch por tarefa; atualize 
 | 22 | Cliente de rede (`duoclip-net`): identidade Ed25519 do PC, requisições assinadas ao Worker, rotas de grupo/convite/presença/clipes + programa `duoclip-amigos` para cadastrar, criar grupo e convidar | C | `crates/duoclip-net` (novo) | Claude | GPT | em revisão | `claude/net-client` | Testes contra Worker local (`wrangler dev`), nunca o remoto Entregue `bb8c1d8` (649 testes; integração local com Worker passou) |
 | 23 | Preparar publicação do backend: comando de validação/pacote local e roteiro de migrações, segredos e teste após publicação | C | `worker/package.json`, `worker/README.md`, `worker/PUBLICACAO.md` | GPT | Claude | em revisão | `gpt/worker-preparar-deploy` | Entrega `4ccd9d4` / GPT036, evidência complementar GPT037. prepare:deploy e roteiro; typecheck, 375 testes Worker, fmt, clippy, 613 testes Rust e GNU passaram. **Usuário executou pelo !: dry-run passou, pacote gerado com bindings DB/CLIPS corretos; GPT conferiu artefatos e ausência das duas chaves R2 locais no conteúdo**. Aguarda revisão do Claude. Sem publicação ou alteração remota. Complementa tarefa 22 |
 
+| 24 | Interface inicial do app: painel, biblioteca com MP4 local, configurações exportáveis e tela de amigos preparada para integração | D | `apps/desktop/` (novo); decisão de UI na memória em commit separado | GPT | Claude | em andamento | `gpt/interface-inicial` | Pedido do usuário em 09/10. Frontend sem instalar dependências; shell Tauri e ligação com gravador/rede em etapa posterior. Não altera o cliente da tarefa 22 |
+
 ## Concluídas
 
 | # | Tarefa | Dono | Revisor | Branch / commit | Resumo |
