@@ -125,6 +125,11 @@ modelo), as rotas que geram URLs respondem `500 internal_error` e o log do Worke
 
 ### 5. Publicar
 
+Para a preparação local, use `npm run prepare:deploy`: typecheck, testes e pacote do
+Worker em `dist/deploy/`, sem publicar. O passo a passo curto para esta conta está em
+[`PUBLICACAO.md`](PUBLICACAO.md), incluindo migrações, segredos e validação após publicar.
+O comando para na primeira falha; o pacote gerado não comprova acesso ao D1/R2 remoto.
+
 ```sh
 npm run typecheck && npm test      # opcional, mas recomendado
 npm run deploy                     # wrangler deploy
