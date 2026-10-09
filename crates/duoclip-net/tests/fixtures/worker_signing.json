@@ -1,0 +1,25 @@
+{
+  "_comment": "Generated once by running the Worker's own TypeScript (worker/src/auth.ts canonicalString/verifySignature + WebCrypto Ed25519) with a throwaway test-only seed. Ed25519 signatures are deterministic, so the Rust signer must reproduce them byte for byte.",
+  "seed_b64": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "public_key_b64": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+  "cases": [
+    {
+      "method": "POST",
+      "path": "/v1/crews",
+      "timestamp": "1760000000000",
+      "body": "{\"name\":\"Amigos do LoL\"}",
+      "body_sha256_hex": "1087e2fbad5792831d4e954a1a9600128b1191652ba70eed092781ea558327db",
+      "canonical": "DC1\nPOST\n/v1/crews\n1760000000000\n1087e2fbad5792831d4e954a1a9600128b1191652ba70eed092781ea558327db",
+      "signature_b64": "cRs8KL3nFaZs1qA8qyXVOH5Ds1mflcsmM6ZRSF1L1AEDqlR3JhHEtmRvhSDhNypdB0vacf28msqrxLIEgt4mDg=="
+    },
+    {
+      "method": "GET",
+      "path": "/v1/crews/11111111-2222-4333-8444-555555555555/members",
+      "timestamp": "1760000000001",
+      "body": "",
+      "body_sha256_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "DC1\nGET\n/v1/crews/11111111-2222-4333-8444-555555555555/members\n1760000000001\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature_b64": "XsZiNJPppUGGkQb8r9ghcw6K1/c5bThtst+6yyaRgA76ULDCeQ9V4fN+GGE3uU+ZjjXMtwzkVuWNwg7Ls6ODBA=="
+    }
+  ]
+}
