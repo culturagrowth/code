@@ -16,10 +16,7 @@ use duoclip_gamesdb::{
 };
 use uuid::Uuid;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    PeekMessageW, MSG, PM_NOREMOVE, PM_REMOVE, WM_HOTKEY,
+    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 
 use super::audio::AudioInput;
@@ -34,12 +31,11 @@ use crate::cli::{summary, Options};
 use crate::clip::{write_clip, ClipTiming, ClipToSave, Press};
 use crate::config::{self, Config, ConfigError, EncoderPref};
 use crate::detect::{basename, discord_targets, match_game, GameMatch};
-use crate::hotkey::MOD_NOREPEAT;
+use crate::hotkey::Hotkey;
 use crate::naming::{clip_file_name, unique_path, LocalTime};
 use crate::presets::{buffer_plan, preset, video_config, MARGIN_SECS};
 
 /// Id of our single hotkey.
-const HOTKEY_ID: i32 = 1;
 /// Foreground polling / window checks.
 const POLL: Duration = Duration::from_secs(1);
 /// Main loop period.
@@ -105,17 +101,11 @@ pub fn run(opts: Options) -> i32 {
         warn(e);
     }
     init_dpi_awareness();
-    if let Err(e) = register_hotkey(&cfg) {
-        eprintln!("Erro: {e}");
-        return 2;
-    }
     println!(
         "Pronto. Abra um jogo; aperte {} para clipar. Ctrl+C encerra.",
         cfg.atalho
     );
     let code = App::new(cfg, clip_dir, sounds).main_loop();
-    // SAFETY: unregisters the hotkey this thread registered (failure is harmless at exit).
-    let _ = unsafe { UnregisterHotKey(None, HOTKEY_ID) };
     ctrlc::mark_done();
     code
 }
@@ -176,33 +166,52 @@ fn clip_folder(cfg: &Config) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn register_hotkey(cfg: &Config) -> Result<(), String> {
-    let mut msg = MSG::default();
-    // SAFETY: makes sure this thread has a message queue (WM_HOTKEY is posted to it); `msg` is a
-    // valid out pointer and nothing is removed.
-    let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
-    let mods = HOT_KEY_MODIFIERS(cfg.atalho.modifiers() | MOD_NOREPEAT);
-    // SAFETY: registers a thread hotkey (no window); unregistered in `run` before exiting.
-    unsafe { RegisterHotKey(None, HOTKEY_ID, mods, cfg.atalho.vk()) }.map_err(|e| {
-        format!(
-            "não foi possível usar o atalho {}: ele já está em uso por outro programa ou é reservado pelo Windows ({e}). \
-             Escolha outro em atalho = \"...\" no arquivo de configuração.",
-            cfg.atalho
-        )
-    })
+/// Detects the clip hotkey by polling the asynchronous key state (`GetAsyncKeyState`).
+///
+/// `RegisterHotKey` was used first, but games that read the keyboard through raw input with
+/// `RIDEV_NOHOTKEYS` suppress application hotkeys while they are in the foreground: on the user's PC
+/// (2026-10-08) F10 never reached DuoClip inside League of Legends, even elevated, while it worked on
+/// the desktop. The async key state still reflects the physical keys, needs no keyboard hook and no
+/// admin rights, and does not steal the key from the game. Polled every loop turn (~10 ms).
+struct HotkeyPoller {
+    hotkey: Hotkey,
+    was_down: bool,
 }
 
-/// `true` when a WM_HOTKEY for our hotkey arrived (drains the thread's message queue).
-fn hotkey_pressed() -> bool {
-    let mut pressed = false;
-    let mut msg = MSG::default();
-    // SAFETY: `msg` is a valid out pointer; thread messages (hwnd None) are only read here.
-    while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
-        if msg.message == WM_HOTKEY && msg.wParam.0 == HOTKEY_ID as usize {
-            pressed = true;
-        }
+impl HotkeyPoller {
+    fn new(hotkey: Hotkey) -> Self {
+        // Treat keys already held at startup as "down" so they do not fire immediately.
+        let mut poller = Self {
+            hotkey,
+            was_down: false,
+        };
+        poller.was_down = poller.combo_down();
+        poller
     }
-    pressed
+
+    /// `true` once per press: on the transition to "the exact combination is held".
+    fn pressed(&mut self) -> bool {
+        let down = self.combo_down();
+        let edge = down && !self.was_down;
+        self.was_down = down;
+        edge
+    }
+
+    /// The main key and exactly the configured modifiers are held (F10 alone does not fire on Alt+F10).
+    fn combo_down(&self) -> bool {
+        let h = &self.hotkey;
+        key_down(VIRTUAL_KEY(h.key.vk))
+            && key_down(VK_CONTROL) == h.ctrl
+            && key_down(VK_MENU) == h.alt
+            && key_down(VK_SHIFT) == h.shift
+            && (key_down(VK_LWIN) || key_down(VK_RWIN)) == h.win
+    }
+}
+
+fn key_down(vk: VIRTUAL_KEY) -> bool {
+    // SAFETY: plain query of the asynchronous key state; no pointers involved.
+    let state = unsafe { GetAsyncKeyState(i32::from(vk.0)) };
+    state < 0 // most significant bit set = key currently down
 }
 
 type WriteResult = Result<(PathBuf, f64, Option<String>), String>;
@@ -245,8 +254,9 @@ impl App {
 
     fn main_loop(mut self) -> i32 {
         say("Esperando um jogo em primeiro plano...");
+        let mut keys = HotkeyPoller::new(self.cfg.atalho);
         while !ctrlc::stop_requested() {
-            if hotkey_pressed() {
+            if keys.pressed() {
                 self.on_hotkey();
             }
             self.pump_session();
